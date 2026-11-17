@@ -32,10 +32,10 @@ async function startSyncRun(kind: string): Promise<number> {
   return lookup.rows?.[0]?.id ?? 0;
 }
 
-async function updateSyncRun(id: number, patch: Partial<{ state: string; cursor: string; progress: SyncProgress; result: string }>): Promise<void> {
+async function updateSyncRun(id: number, patch: Partial<{ state: string; resumeCursor: string; progress: SyncProgress; result: string }>): Promise<void> {
   const sets: string[] = [];
   if (patch.state) sets.push(`state = '${patch.state}'`);
-  if (patch.cursor) sets.push(`cursor = '${patch.cursor}'`);
+  if (patch.resumeCursor) sets.push(`resume_cursor = '${patch.resumeCursor}'`);
   if (patch.progress) sets.push(`progress = '${JSON.stringify(patch.progress).replace(/'/g, "''")}'`);
   if (patch.result !== undefined) sets.push(`result = '${patch.result.replace(/'/g, "''")}'`);
   if (!sets.length) return;
@@ -123,6 +123,7 @@ async function upsertShortages(records: FdaShortageRecord[]): Promise<{ keys: st
 export async function runSyncJob(kind: string): Promise<void> {
   await runMigrations();
   const runId = await startSyncRun(kind);
+  console.log(`[shortfall] sync run ${runId} started (kind=${kind})`);
   const progress: SyncProgress = { fdaDone: 0, fdaTotal: 0, matched: 0, impactDone: 0, impactTotal: 0 };
   try {
     const settings = await getSettings();
@@ -146,9 +147,20 @@ export async function runSyncJob(kind: string): Promise<void> {
     progress.matched = matches.length;
     await updateSyncRun(runId, { progress });
 
-    // Persist matches (mark earlier rows superseded, insert current set).
+    // Persist matches idempotently: keep one active row per
+    // (shortage_key, formulary_item_id); supersede rows no longer valid.
     const matchedKeys = new Set(matches.map((m) => m.shortageKey));
+    const active = (await sql.executeRaw<{ id: number; shortage_key: string; formulary_item_id: string }>(
+      `SELECT id, shortage_key, formulary_item_id FROM \`match\` WHERE superseded = 0`,
+    )).rows ?? [];
+    const wanted = new Set(matches.map((m) => `${m.shortageKey}|${m.formularyItemId}`));
+    const activePairs = new Set(active.map((r) => `${r.shortage_key}|${r.formulary_item_id}`));
+    const staleIds = active.filter((r) => !wanted.has(`${r.shortage_key}|${r.formulary_item_id}`)).map((r) => r.id);
+    for (const id of staleIds) {
+      await sql.executeRaw(`UPDATE \`match\` SET superseded = 1 WHERE id = ${id}`);
+    }
     for (const m of matches) {
+      if (activePairs.has(`${m.shortageKey}|${m.formularyItemId}`)) continue;
       await sql.executeRaw(
         `INSERT INTO \`match\` (shortage_key, formulary_item_id, reason, detail, created_at)
          VALUES ('${m.shortageKey}', '${m.formularyItemId}', '${m.reason}', '${m.detail.replace(/'/g, "''")}', NOW())`,
@@ -175,7 +187,31 @@ export async function runSyncJob(kind: string): Promise<void> {
       progress,
       result: JSON.stringify({ records: records.length, matched: matches.length, impact: impactResult }),
     });
+
+    // Evidence for `forge logs`: run summary + table counts after the run.
+    const count = async (t: string) =>
+      (await sql.executeRaw<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)).rows?.[0]?.n ?? 0;
+    console.log('[shortfall] EVIDENCE ' + JSON.stringify({
+      runId,
+      fdaRecords: records.length,
+      fdaLastUpdated: lastUpdated,
+      newShortages: newKeys.length,
+      resolvedNow: resolvedKeys.length,
+      matches: matches.length,
+      impact: impactResult,
+      responses: responseResult,
+      reversals: reversalResult,
+      counts: {
+        shortage: await count('shortage'),
+        formulary_item: await count('formulary_item'),
+        match: await count('\`match\`'),
+        impact_item: await count('impact_item'),
+        response: await count('response'),
+        sync_run: await count('sync_run'),
+      },
+    }));
   } catch (e) {
+    console.log(`[shortfall] sync run ${runId} FAILED: ${String(e)}`);
     await updateSyncRun(runId, { state: 'error', result: String(e) });
     throw e;
   }

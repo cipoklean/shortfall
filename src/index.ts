@@ -43,6 +43,14 @@ export const bylineProps = async (
   return { title: 'Shortfall', tooltip: 'Drug shortage status for this page' };
 };
 
+export { webSync, webReport } from './webtrigger';
+
+/** Byline popup data (invoked from the byline resource by function key). */
+export const bylineData = async (req: { payload?: { pageId?: string }; pageId?: string }) => {
+  const { getPageNoticeData } = await import('./resolvers');
+  return getPageNoticeData(req?.payload?.pageId ?? req?.pageId);
+};
+
 export const getActiveShortages = actionGetActiveShortages;
 export const getShortageImpact = actionGetShortageImpact;
 export const getPastResponses = actionGetPastResponses;

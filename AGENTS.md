@@ -14,6 +14,12 @@ Forge app (TypeScript) for Codegeist 2026 + a static landing page.
   (repeat with `-p Confluence`)
 - `cd landing && node build.mjs` — build landing site into `landing/dist/`
 
+## Git
+
+- Remote: `origin` = https://github.com/cipoklean/shortfall.git (main).
+- ALWAYS commit as `cipoklean` — repo-local `user.name`/`user.email` are set;
+  never commit as the Devin bot identity.
+
 ## Environment
 
 - Node must be `>=22.23.4` or `>=24.22.1`; the Forge CLI hard-fails on older.

@@ -125,7 +125,7 @@ migrationRunner.enqueue(
     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
     kind            VARCHAR(32),
     state           VARCHAR(32),
-    cursor          VARCHAR(128),
+    resume_cursor   VARCHAR(128),
     progress        MEDIUMTEXT,
     started_at      DATETIME,
     finished_at     DATETIME,
@@ -142,6 +142,19 @@ migrationRunner.enqueue(
     v               MEDIUMTEXT,
     updated_at      DATETIME
   )`,
+);
+
+// Repair: an early version inserted a new match row per sync, duplicating
+// pairs. Keep the lowest-id row per active (shortage, formulary item) pair.
+migrationRunner.enqueue(
+  '009-match-dedupe',
+  `DELETE m1 FROM \`match\` m1
+   INNER JOIN \`match\` m2
+     ON m1.shortage_key = m2.shortage_key
+    AND m1.formulary_item_id = m2.formulary_item_id
+    AND m2.superseded = 0
+    AND m1.id > m2.id
+   WHERE m1.superseded = 0`,
 );
 
 /** Apply pending migrations. Idempotent; safe to call at every job start. */

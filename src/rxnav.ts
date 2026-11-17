@@ -42,6 +42,21 @@ export class RxNavClient {
     });
   }
 
+  /** Look up the RxNorm concept id for a drug name, or null. */
+  async nameToRxcui(name: string): Promise<string | null> {
+    const key = `rxnav:name:${name.toLowerCase()}`;
+    return this.cached(key, async () => {
+      const res = await this.f(
+        `${BASE}/rxcui.json?name=${encodeURIComponent(name)}&search=2`,
+      );
+      if (!res.ok) return null;
+      const body = (await res.json()) as {
+        idGroup?: { rxnormId?: string[] };
+      };
+      return body.idGroup?.rxnormId?.[0] ?? null;
+    });
+  }
+
   /** Ingredient concepts (TTY=IN) for an rxcui. */
   async ingredientsForRxcui(rxcui: string): Promise<IngredientRef[]> {
     const out = await this.cached(`rxnav:in:${rxcui}`, async () => {

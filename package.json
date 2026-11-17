@@ -9,18 +9,21 @@
     "test": "vitest run",
     "deploy": "forge deploy -e development --non-interactive",
     "forge:lint": "forge lint",
-    "landing:build": "node landing/build.mjs"
+    "landing:build": "node landing/build.mjs",
+    "ui:build": "node ui/build.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@typescript-eslint/eslint-plugin": "^8.46.0",
     "@typescript-eslint/parser": "^8.46.0",
+    "esbuild": "^0.28.2",
     "eslint": "^9.39.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
   "dependencies": {
     "@forge/api": "^7.0.0",
+    "@forge/bridge": "^7.3.0",
     "@forge/events": "^3.0.10",
     "@forge/kvs": "^1.2.0",
     "@forge/resolver": "^1.7.0",

@@ -6,6 +6,7 @@ import { enqueueSync } from './sync';
 import { probeGraph } from './graph';
 import { FormularyItem } from './types';
 import { normalizeDrugName, stripSalts } from './match';
+import { loadSampleHospital, removeSampleHospital, getSampleState } from './sample';
 
 const resolver = new Resolver();
 
@@ -65,6 +66,61 @@ resolver.define('importFormulary', async ({ payload }: { payload: { items: Formu
 resolver.define('startSync', async () => {
   await runMigrations();
   return enqueueSync('manual');
+});
+
+/** Matched shortages for the dashboard (joined to formulary display names). */
+resolver.define('getMatchedShortages', async () => {
+  const rows = await sql.executeRaw<{
+    shortage_key: string; generic_name: string; status: string; package_ndc: string;
+    presentation: string; dosage_form: string; company_name: string; update_date: string;
+    initial_posting_date: string; reason: string; display_name: string;
+  }>(
+    `SELECT s.shortage_key, s.generic_name, s.status, s.package_ndc, s.presentation,
+            s.dosage_form, s.company_name, s.update_date, s.initial_posting_date,
+            m.reason, f.display_name
+     FROM \`match\` m
+     JOIN shortage s ON s.shortage_key = m.shortage_key
+     JOIN formulary_item f ON f.id = m.formulary_item_id
+     ORDER BY CASE s.status WHEN 'Current' THEN 0 WHEN 'To Be Discontinued' THEN 1 ELSE 2 END,
+              s.update_date DESC
+     LIMIT 200`,
+  );
+  return (rows.rows ?? []).map((r) => ({
+    shortageId: r.shortage_key,
+    genericName: r.generic_name,
+    presentation: r.presentation,
+    packageNdc: r.package_ndc,
+    dosageForm: r.dosage_form,
+    company: r.company_name,
+    status: r.status,
+    updateDate: r.update_date,
+    initialPostingDate: r.initial_posting_date,
+    matchedTo: r.display_name,
+    reason: r.reason,
+    source: `https://api.fda.gov/drug/shortages.json?search=package_ndc:%22${r.package_ndc}%22`,
+  }));
+});
+
+/** Recent sync_run rows for the dashboard log view. */
+resolver.define('getSyncLog', async () => {
+  const rows = await sql.executeRaw<{
+    id: number; kind: string; state: string; started_at: string; finished_at: string; result: string;
+  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY id DESC LIMIT 10`);
+  return rows.rows ?? [];
+});
+
+resolver.define('loadSampleHospital', async () => {
+  await runMigrations();
+  return loadSampleHospital();
+});
+
+resolver.define('removeSampleHospital', async () => {
+  await runMigrations();
+  return removeSampleHospital();
+});
+
+resolver.define('getSampleState', async () => {
+  return getSampleState();
 });
 
 resolver.define('getSyncProgress', async () => {

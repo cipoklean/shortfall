@@ -178,6 +178,12 @@ modules:
     - key: main
       engine: mysql
 
+  webtrigger:
+    - key: sync-action-trigger
+      function: fn-web-sync
+    - key: sync-report-trigger
+      function: fn-web-report
+
   function:
     - key: ui-resolver
       handler: index.handler
@@ -201,6 +207,12 @@ modules:
       handler: index.draftClinicianMessage
     - key: fn-create-task
       handler: index.createResponseTask
+    - key: fn-web-sync
+      handler: index.webSync
+    - key: fn-web-report
+      handler: index.webReport
+    - key: fn-byline-data
+      handler: index.bylineData
 
 resources:
   - key: dashboard-ui
@@ -221,6 +233,11 @@ permissions:
     - read:jira-user
     - read:confluence-content.all
     - read:confluence-space.summary
+    - write:confluence-content
+    - write:confluence-space
+    - read:space:confluence
+    - write:page:confluence
+    - delete:page:confluence
     - read:confluence-user
     - storage:app
     - read:graph:user:atlassian
