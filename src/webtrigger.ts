@@ -1,7 +1,10 @@
 import { sql, runMigrations } from './storage/schema';
 import { enqueueSync } from './sync';
 import { loadSampleHospital, removeSampleHospital } from './sample';
+import { createResponsesForNewMatches } from './respond';
+import { saveSettings } from './settings';
 import { kvs } from '@forge/kvs';
+import api, { route } from '@forge/api';
 
 /**
  * Diagnostic webtriggers. The URLs are unauthenticated capability links, so
@@ -60,6 +63,25 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
       return json(200, await loadSampleHospital());
     case 'sample-remove':
       return json(200, await removeSampleHospital());
+    case 'settings': {
+      const patch: Record<string, unknown> = {};
+      if (req.queryParameters?.auto?.[0] === '1') patch.autoCreateResponses = true;
+      if (req.queryParameters?.project?.[0]) patch.responseProjectKey = req.queryParameters.project[0];
+      if (req.queryParameters?.spaces?.[0]) patch.clinicalSpaceKeys = req.queryParameters.spaces[0].split(',').filter(Boolean);
+      if (req.queryParameters?.setup?.[0] === '1') patch.setupComplete = true;
+      return json(200, await saveSettings(patch));
+    }
+    case 'projects': {
+      const res = await api.asApp().requestJira(route`/rest/api/3/project/search`, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return json(res.status, { error: `projects HTTP ${res.status}`, body: (await res.text()).slice(0, 300) });
+      const data = (await res.json()) as { values?: { key: string; name: string }[] };
+      return json(200, (data.values ?? []).map((p) => ({ key: p.key, name: p.name })));
+    }
+    case 'respond': {
+      const key = req.queryParameters?.key?.[0] ?? '';
+      if (!key) return json(400, { error: 'missing key param' });
+      return json(200, await createResponsesForNewMatches([key]));
+    }
     case 'set-user': {
       const user = req.queryParameters?.user?.[0] ?? '';
       if (!user) return json(400, { error: 'missing user param' });

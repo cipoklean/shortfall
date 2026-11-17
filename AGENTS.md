@@ -55,3 +55,16 @@ Forge app (TypeScript) for Codegeist 2026 + a static landing page.
   `node_modules/.cache/forge-out`. Use `tsc --noEmit` for checks.
 - `landing/config/site.json` is the single source of truth for all links on
   the landing page (still contains TODO placeholders).
+- `cursor` is a MySQL reserved word (migration 007 failed); use `resume_cursor`.
+- Confluence v1 content API is removed (410): use `/wiki/api/v2/pages`,
+  `/wiki/api/v2/spaces` and granular scopes `read:space/write:page/
+  delete:page:confluence`; CQL search needs `search:confluence`.
+- Forge SQL schemas are per install context — run migrations at every entry.
+- Teamwork Graph API is user-context ONLY (`api.asUser()`); asUser(id)
+  impersonation → NO_IMPERSONATION_SCOPES_DEFINED. Owner/team enrichment
+  must run in a user-invoked resolver (`enrichImpact`) or byline context.
+- JQL/CQL: `~` takes one term each — `text ~ "a" OR text ~ "b"`.
+- Webtrigger ctx has no environmentId; installContext ARI carries cloudId.
+  Evidence URLs are gated on token = cloudId (forge logs show principal=undefined).
+- Demo evidence: site one-atlas-ojjg.atlassian.net, sample space SHOSP,
+  response project PROC (response item PROC-126), dashboard via Jira Apps nav.
