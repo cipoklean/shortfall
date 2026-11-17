@@ -4,6 +4,7 @@ import { sql } from './storage/schema';
 import { RxNavClient } from './rxnav';
 import { normalizeDrugName, stripSalts, normalizeNdc } from './match';
 import { FormularyItem } from './types';
+import { getSettings, saveSettings } from './settings';
 
 /**
  * Sample hospital: creates realistic fictional content through the same
@@ -142,6 +143,12 @@ export async function loadSampleHospital(): Promise<{ spaceKey: string; pageIds:
 
   const space = await ensureSpace();
   refs.spaceKey = space.key;
+
+  // Count the sample space as clinical content unless the admin chose others.
+  const settings = await getSettings();
+  if (!settings.clinicalSpaceKeys.length || !settings.clinicalSpaceKeys.includes(SPACE_KEY)) {
+    await saveSettings({ clinicalSpaceKeys: [...settings.clinicalSpaceKeys, SPACE_KEY] });
+  }
 
   for (const page of SAMPLE_PAGES) {
     try {

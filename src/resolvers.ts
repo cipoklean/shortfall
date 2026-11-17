@@ -22,7 +22,7 @@ resolver.define('getDashboardData', async () => {
     `SELECT COUNT(*) AS n FROM impact_item`,
   );
   const settings = await getSettings();
-  const graph = await probeGraph();
+  const graph = await probeGraph((await kvs.get('graphUserId')) as string | undefined);
   return {
     lastSync,
     activeMatched: active.rows?.[0]?.n ?? 0,
@@ -63,7 +63,18 @@ resolver.define('importFormulary', async ({ payload }: { payload: { items: Formu
 });
 
 /** "Sync now" button. */
-resolver.define('startSync', async () => {
+interface ReqContext { accountId?: string; cloudId?: string; installContext?: string }
+
+/** Capture the calling user's identity + site id for async graph calls. */
+async function captureContext(ctx?: ReqContext) {
+  const accountId = ctx?.accountId;
+  if (accountId) await kvs.set('graphUserId', accountId);
+  const cloudId = ctx?.cloudId ?? String(ctx?.installContext ?? '').match(/[0-9a-f-]{36}/i)?.[0];
+  if (cloudId) await kvs.set('cloudId', cloudId);
+}
+
+resolver.define('startSync', async ({ context }: { context?: ReqContext }) => {
+  await captureContext(context);
   await runMigrations();
   return enqueueSync('manual');
 });
@@ -109,7 +120,8 @@ resolver.define('getSyncLog', async () => {
   return rows.rows ?? [];
 });
 
-resolver.define('loadSampleHospital', async () => {
+resolver.define('loadSampleHospital', async ({ context }: { context?: ReqContext }) => {
+  await captureContext(context);
   await runMigrations();
   return loadSampleHospital();
 });
@@ -175,6 +187,34 @@ resolver.define('getIssuePanelData', async ({ context }: { context: { issueKey?:
     `SELECT kind, ref_id, title, url, owner_name, team_name, found_via FROM impact_item WHERE shortage_key = '${key}' ORDER BY kind, title`,
   );
   return { found: true, shortage: shortage.rows?.[0], impact: impact.rows ?? [] };
+});
+
+/**
+ * Foreground enrichment: fill owner/team on impact pages via Teamwork Graph.
+ * Runs as the calling user (the only context the graph API accepts), so it
+ * is invoked from the dashboard rather than the async worker.
+ */
+resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) => {
+  await captureContext(context);
+  const cloudId = (await kvs.get('cloudId')) as string | undefined;
+  const rows = (await sql.executeRaw<{ id: number; ref_id: string }>(
+    `SELECT id, ref_id FROM impact_item WHERE kind = 'page'`,
+  )).rows ?? [];
+  const { pageOwners, pageCreator } = await import('./graph');
+  let enriched = 0;
+  const missing: string[] = [];
+  for (const row of rows) {
+    const pageAri = cloudId ? `ari:cloud:confluence:${cloudId}:page/${row.ref_id}` : `ari:cloud:confluence::page/${row.ref_id}`;
+    const owners = await pageOwners(pageAri);
+    if (owners.error) { missing.push(owners.error); continue; }
+    const nodes = owners.nodes.length ? owners.nodes : (await pageCreator(pageAri)).nodes;
+    const name = nodes.map((n) => n.name ?? n.displayName ?? '').filter(Boolean).join(', ');
+    if (name) {
+      await sql.executeRaw(`UPDATE impact_item SET owner_name = '${name.replace(/'/g, "''")}' WHERE id = ${row.id}`);
+      enriched++;
+    }
+  }
+  return { enriched, missing: [...new Set(missing)].slice(0, 10) };
 });
 
 export const uiResolver = resolver.getDefinitions();

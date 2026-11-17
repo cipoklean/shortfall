@@ -167,7 +167,10 @@ export async function runSyncJob(kind: string): Promise<void> {
       );
     }
 
-    const impactResult = await runImpactMapping(matchedKeys, progress);
+    const impactResult = await runImpactMapping(matchedKeys, progress, {
+      graphUserId: (await kvs.get('graphUserId')) as string | undefined,
+      cloudId: (await kvs.get('cloudId')) as string | undefined,
+    });
     const responseResult = settings.autoCreateResponses
       ? await createResponsesForNewMatches(newKeys)
       : { created: 0, skipped: 'auto-create disabled' };

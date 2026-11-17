@@ -1,7 +1,7 @@
 import api, { route } from '@forge/api';
 import { sql } from './storage/schema';
 import { getSettings } from './settings';
-import { probeGraph, ownersForContent } from './graph';
+import { probeGraph, pageOwners, pageCreator, teamsForSpace } from './graph';
 import { normalizeDrugName } from './match';
 
 export interface ImpactResult {
@@ -34,8 +34,8 @@ export function searchTermsFor(shortage: ShortageRow): string[] {
 
 async function searchConfluence(terms: string[], spaceKeys: string[]) {
   const spaceFilter = spaceKeys.length ? ` AND space IN (${spaceKeys.map((s) => `"${s}"`).join(',')})` : '';
-  const textQuery = terms.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
-  const cql = `type = page AND text ~ (${textQuery})${spaceFilter}`;
+  const textQuery = terms.map((t) => `text ~ "${t.replace(/"/g, '')}"`).join(' OR ');
+  const cql = `type = page AND (${textQuery})${spaceFilter}`;
   const res = await api.asApp().requestConfluence(
     route`/wiki/rest/api/content/search?cql=${cql}&limit=50&expand=version.by,space`,
     { headers: { Accept: 'application/json' } },
@@ -51,14 +51,15 @@ async function searchConfluence(terms: string[], spaceKeys: string[]) {
       ownerAccountId: p.version?.by?.accountId,
       ownerName: p.version?.by?.displayName,
       spaceKey: p.space?.key,
+      spaceId: (p.space as { id?: string } | undefined)?.id,
       foundVia: 'confluence-search',
     })),
   };
 }
 
 async function searchJira(terms: string[]) {
-  const textQuery = terms.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
-  const jql = `text ~ (${textQuery}) AND statusCategory != Done ORDER BY updated DESC`;
+  const textQuery = terms.map((t) => `text ~ "${t.replace(/"/g, '')}"`).join(' OR ');
+  const jql = `(${textQuery}) AND statusCategory != Done ORDER BY updated DESC`;
   const res = await api.asApp().requestJira(
     route`/rest/api/3/search/jql?jql=${jql}&maxResults=50&fields=summary,assignee,status,created`,
     { headers: { Accept: 'application/json' } },
@@ -88,15 +89,36 @@ async function searchJira(terms: string[]) {
 export async function runImpactMapping(
   shortageKeys: Set<string>,
   progress: { impactDone: number; impactTotal: number },
+  ctx: { graphUserId?: string; cloudId?: string } = {},
 ): Promise<ImpactResult> {
   const settings = await getSettings();
-  const graph = await probeGraph();
+  const graph = await probeGraph(ctx.graphUserId);
   const missing: string[] = [...graph.missingScopes];
   if (!graph.available && graph.note) missing.push(graph.note);
+  const graphUser = graph.available ? ctx.graphUserId : undefined;
 
   progress.impactTotal = shortageKeys.size;
   let pages = 0;
   let jiraItems = 0;
+
+  // One active impact_item per (shortage, kind, ref) — dedupe like match.
+  const active = (await sql.executeRaw<{ shortage_key: string; kind: string; ref_id: string }>(
+    `SELECT shortage_key, kind, ref_id FROM impact_item`,
+  )).rows ?? [];
+  const seen = new Set(active.map((r) => `${r.shortage_key}|${r.kind}|${r.ref_id}`));
+
+  const spaceTeams = new Map<string, string>();
+  async function teamForSpace(spaceId?: string): Promise<string | undefined> {
+    if (!graphUser || !spaceId || !ctx.cloudId) return undefined;
+    const cached = spaceTeams.get(spaceId);
+    if (cached !== undefined) return cached || undefined;
+    const ari = `ari:cloud:confluence:${ctx.cloudId}:space/${spaceId}`;
+    const res = await teamsForSpace(ari, graphUser);
+    if (res.error) missing.push(`graph teams: ${res.error}`);
+    const name = res.nodes.map((n) => n.name ?? n.displayName ?? '').filter(Boolean).join(', ');
+    spaceTeams.set(spaceId, name);
+    return name || undefined;
+  }
 
   for (const key of shortageKeys) {
     const rows = await sql.executeRaw<ShortageRow>(
@@ -112,22 +134,34 @@ export async function runImpactMapping(
 
     for (const item of [...conf.items, ...jira.items] as {
       kind: string; refId: string; title: string; url: string;
-      ownerAccountId?: string; ownerName?: string; foundVia: string;
+      ownerAccountId?: string; ownerName?: string; foundVia: string; spaceId?: string;
     }[]) {
+      if (seen.has(`${key}|${item.kind}|${item.refId}`)) continue;
+      seen.add(`${key}|${item.kind}|${item.refId}`);
+
+      let ownerName = item.ownerName;
+      let ownerAccountId = item.ownerAccountId;
       let teamName: string | undefined;
-      if (graph.available && item.kind === 'page') {
-        const owner = await ownersForContent(`ari:cloud:confluence::page/${item.refId}`);
-        teamName = owner?.teamName;
+      if (graphUser && item.kind === 'page' && ctx.cloudId) {
+        const pageAri = `ari:cloud:confluence:${ctx.cloudId}:page/${item.refId}`;
+        const owners = await pageOwners(pageAri, graphUser);
+        if (owners.error) missing.push(`graph owners: ${owners.error}`);
+        const ownerNodes = owners.nodes.length ? owners.nodes : (await pageCreator(pageAri, graphUser)).nodes;
+        if (ownerNodes.length) {
+          ownerName = ownerNodes.map((n) => n.name ?? n.displayName ?? n.id ?? '').filter(Boolean).join(', ') || ownerName;
+          ownerAccountId = ownerNodes[0].id?.split('/').pop() ?? ownerAccountId;
+        }
+        teamName = await teamForSpace(item.spaceId);
       }
       const esc = (s: string | undefined) => (s ?? '').replace(/'/g, "''");
       await sql.executeRaw(
         `INSERT INTO impact_item (shortage_key, kind, ref_id, title, url, owner_account_id, owner_name, team_name, found_via, created_at)
-         VALUES ('${key}', '${item.kind}', '${esc(item.refId)}', '${esc(item.title)}', '${esc(item.url)}', '${esc(item.ownerAccountId)}', '${esc(item.ownerName)}', '${esc(teamName)}', '${item.foundVia}', NOW())`,
+         VALUES ('${key}', '${item.kind}', '${esc(item.refId)}', '${esc(item.title)}', '${esc(item.url)}', '${esc(ownerAccountId)}', '${esc(ownerName)}', '${esc(teamName)}', '${item.foundVia}', NOW())`,
       );
       if (item.kind === 'page') pages++; else jiraItems++;
     }
     progress.impactDone++;
   }
 
-  return { pages, jiraItems, reducedMode: missing.length > 0, missing };
+  return { pages, jiraItems, reducedMode: missing.length > 0, missing: [...new Set(missing)].slice(0, 20) };
 }

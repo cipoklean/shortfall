@@ -239,6 +239,7 @@ permissions:
     - write:page:confluence
     - delete:page:confluence
     - read:confluence-user
+    - search:confluence
     - storage:app
     - read:graph:user:atlassian
     - read:graph:team:atlassian

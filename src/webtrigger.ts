@@ -47,6 +47,11 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
     return json(403, { error: 'forbidden' });
   }
   await runMigrations();
+  const cloudId = String((ctx as Record<string, unknown>)?.installContext ?? '').match(/[0-9a-f-]{36}/i)?.[0];
+  if (cloudId) await kvs.set('cloudId', cloudId);
+  const principal = (ctx as Record<string, unknown>)?.principal as { accountId?: string } | undefined;
+  console.log(`webSync principal=${JSON.stringify(principal)}`);
+  if (principal?.accountId) await kvs.set('graphUserId', principal.accountId);
   const action = req.queryParameters?.action?.[0] ?? 'sync';
   switch (action) {
     case 'sync':
@@ -55,6 +60,12 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
       return json(200, await loadSampleHospital());
     case 'sample-remove':
       return json(200, await removeSampleHospital());
+    case 'set-user': {
+      const user = req.queryParameters?.user?.[0] ?? '';
+      if (!user) return json(400, { error: 'missing user param' });
+      await kvs.set('graphUserId', user);
+      return json(200, { graphUserId: user });
+    }
     default:
       return json(400, { error: `unknown action ${action}` });
   }
@@ -88,6 +99,14 @@ export async function webReport(req: WebRequest, ctx: WebContext) {
 
   const lastSync = (await kvs.get('lastSync')) ?? null;
 
+  const pageCheckId = req.queryParameters?.pageId?.[0];
+  const { getPageNoticeData } = await import('./resolvers');
+  const pageCheck = pageCheckId ? await getPageNoticeData(pageCheckId) : undefined;
+
+  const impactItems = (await sql.executeRaw<{
+    shortage_key: string; kind: string; ref_id: string; title: string; owner_name: string; team_name: string; found_via: string;
+  }>(`SELECT shortage_key, kind, ref_id, title, owner_name, team_name, found_via FROM impact_item LIMIT 100`)).rows ?? [];
+
   return json(200, {
     generatedAt: new Date().toISOString(),
     counts: {
@@ -100,6 +119,8 @@ export async function webReport(req: WebRequest, ctx: WebContext) {
     },
     syncRuns,
     lastSync,
+    pageCheck,
+    impactItems,
     matchedShortages: matches.map((m) => ({
       shortageKey: m.shortage_key,
       genericName: m.generic_name,
