@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy — Shortfall</title>
+<meta name="description" content="What data Shortfall reads, stores and sends. It collects no patient data and sends nothing about your site to outside hosts.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Shortfall home">
+      <svg width="26" height="26" viewBox="0 0 40 40" aria-hidden="true"><rect x="9" y="7" width="22" height="26" fill="none" stroke="#1c1a15" stroke-width="2.4" stroke-dasharray="5 3.5"/><line x1="4" y1="36" x2="36" y2="36" stroke="#1c1a15" stroke-width="3"/></svg>
+      Shortfall
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/setup">Setup</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
+      <a class="nav-cta" href="{{installUrl}}">Install</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="page-body">
+<section>
+  <div class="wrap">
+    <span class="mono-detail rx-code">PRIVACY · DATA SHEET · REV 2026-11</span>
+    <h1 style="font-size:clamp(2rem,5vw,3rem)">Privacy</h1>
+
+    <div class="callout callout--teal">
+      <strong>No patient data, by design.</strong> Shortfall never asks for,
+      stores or displays patient information. Its only inbound data is public
+      drug shortage data and your site's own content.
+    </div>
+
+    <h2>What the app reads</h2>
+    <ul>
+      <li><strong>FDA drug shortages</strong> — the public list at <code>api.fda.gov</code>, fetched daily.</li>
+      <li><strong>NLM RxNav</strong> — public drug identifiers at <code>rxnav.nlm.nih.gov</code>, used to normalize names and NDCs.</li>
+      <li><strong>Your Confluence pages</strong> — page titles, links and owners in the spaces you mark as clinical content.</li>
+      <li><strong>Your Jira work items</strong> — summaries, assignees and status of work that names a shorted drug.</li>
+      <li><strong>Teamwork Graph</strong> — owner and team relationships for affected content, only where an admin granted the scopes.</li>
+      <li><strong>The drug list you provide</strong> — pasted or uploaded by your admin, or the fictional sample hospital.</li>
+    </ul>
+
+    <h2>What the app stores</h2>
+    <ul>
+      <li>FDA shortage records and their first-seen/last-seen history.</li>
+      <li>Your drug list, the match results, the impact map and response records — all inside your Atlassian site in the app's own Forge storage (Forge SQL and key-value store).</li>
+      <li>Settings chosen during setup and an audit log of sync runs.</li>
+    </ul>
+
+    <h2>What the app sends</h2>
+    <p><strong>Nothing about your site leaves it.</strong> The only external hosts the app can reach are the two public drug-data services above, declared in its manifest. No analytics, no tracking, no telemetry to us. This website itself sets no cookies and runs no tracking scripts.</p>
+
+    <h2>Writes</h2>
+    <p>Creating Jira work items, tasks or page notices happens automatically only if your admin enabled it in settings. Agent-initiated writes always ask for confirmation first.</p>
+
+    <h2>AI features</h2>
+    <p>Drafting runs through the site's own Rovo agent — there are no third-party LLM calls. The agent writes only from facts the app returns with sources, and a person approves before anything is sent.</p>
+
+    <h2>Removing your data</h2>
+    <p>Uninstalling the app removes its Forge storage on your site. The sample hospital's own remove button deletes exactly what it created.</p>
+
+    <p style="margin-top:32px"><a class="btn btn--ghost" href="/">Back to home</a></p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p class="fine-print">Shortfall is an independent app and is not affiliated with or endorsed by Atlassian or the FDA. openFDA data is unvalidated: do not rely on it to make decisions regarding medical care.</p>
+  </div>
+</footer>
+<script src="/assets/js/main.js" defer></script>
+</body>
+</html>

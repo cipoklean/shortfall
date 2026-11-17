@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shortfall — know what a drug shortage touches</title>
+<meta name="description" content="Shortfall matches the FDA drug shortage list to a hospital's own drug list inside Jira and Confluence, shows which protocols, work and owners are affected, runs the response, and reverses temporary changes when supply returns.">
+<meta property="og:title" content="Shortfall — know what a drug shortage touches">
+<meta property="og:description" content="FDA drug shortages mapped to your protocols, owners and past decisions — inside Jira and Confluence.">
+<meta property="og:image" content="/og-image.png">
+<meta property="og:type" content="website">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Shortfall home">
+      <svg width="26" height="26" viewBox="0 0 40 40" aria-hidden="true"><rect x="9" y="7" width="22" height="26" fill="none" stroke="#1c1a15" stroke-width="2.4" stroke-dasharray="5 3.5"/><line x1="4" y1="36" x2="36" y2="36" stroke="#1c1a15" stroke-width="3"/></svg>
+      Shortfall
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="/setup">Setup</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
+      <a class="nav-cta" href="{{installUrl}}">Install</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- 1. HERO -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="mono-detail rx-code">NDC 0000-0000-00 · FORMULARY MATCHED · LOT CG-2026</span>
+      <h1>Know what a shortage touches before the shelf is empty</h1>
+      <p class="lede">When the FDA puts a drug on the shortage list, Shortfall finds the protocols and work items that name it, the people who own them, and what you did last time — then runs the response in Jira and Confluence.</p>
+      <div class="hero-ctas">
+        <a class="btn" href="{{installUrl}}">Install on your site</a>
+        <a class="btn btn--ghost" href="#demo">Watch the demo</a>
+      </div>
+      <div class="fda-counter" role="status" aria-live="polite">
+        <span class="count" id="fda-count">{{fdaCountFallback}}</span>
+        <div class="label">drugs in shortage today, per the FDA (<span id="fda-date">{{fdaCountFallbackDate}}</span>)</div>
+        <div class="disclaimer">Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.</div>
+      </div>
+    </div>
+    <svg class="hero-shelf" viewBox="0 0 640 300" role="img" aria-label="A pharmacy shelf of labelled vials and boxes with one slot empty">
+      <!-- slot outlines -->
+      <g fill="none" stroke="#1c1a15" stroke-width="2">
+        <rect x="20"  y="60" width="120" height="200"/>
+        <rect x="140" y="60" width="120" height="200"/>
+        <rect x="260" y="60" width="120" height="200"/>
+        <rect x="380" y="60" width="120" height="200"/>
+        <rect x="500" y="60" width="120" height="200"/>
+      </g>
+      <!-- item 1: vial -->
+      <g stroke="#1c1a15" stroke-width="2" fill="none">
+        <rect x="52" y="140" width="56" height="110" rx="6"/>
+        <rect x="62" y="120" width="36" height="20"/>
+        <rect x="58" y="170" width="44" height="52" fill="#f6f3ea"/>
+        <line x1="62" y1="182" x2="98" y2="182"/><line x1="62" y1="192" x2="90" y2="192"/><line x1="62" y1="202" x2="94" y2="202"/>
+      </g>
+      <!-- item 2: box -->
+      <g stroke="#1c1a15" stroke-width="2" fill="none">
+        <rect x="168" y="120" width="104" height="130"/>
+        <rect x="180" y="136" width="80" height="40" fill="#f6f3ea"/>
+        <line x1="188" y1="148" x2="252" y2="148"/><line x1="188" y1="158" x2="240" y2="158"/>
+        <line x1="180" y1="196" x2="260" y2="196"/><line x1="180" y1="208" x2="248" y2="208"/><line x1="180" y1="220" x2="256" y2="220"/>
+      </g>
+      <!-- item 3: bottle -->
+      <g stroke="#1c1a15" stroke-width="2" fill="none">
+        <path d="M312 140 h16 v-22 h28 v22 h16 a10 10 0 0 1 10 10 v100 a10 10 0 0 1 -10 10 h-60 a10 10 0 0 1 -10 -10 v-100 a10 10 0 0 1 10 -10 z"/>
+        <rect x="314" y="176" width="56" height="50" fill="#f6f3ea"/>
+        <line x1="320" y1="188" x2="364" y2="188"/><line x1="320" y1="198" x2="356" y2="198"/><line x1="320" y1="208" x2="360" y2="208"/>
+      </g>
+      <!-- THE GAP: empty slot, dashed outline -->
+      <rect x="388" y="68" width="104" height="184" fill="none" stroke="#d9820b" stroke-width="3" stroke-dasharray="8 6"/>
+      <text x="440" y="272" text-anchor="middle" font-family="'IBM Plex Mono',monospace" font-size="11" fill="#d9820b" letter-spacing="2">SHORT SUPPLY</text>
+      <!-- item 5: carton -->
+      <g stroke="#1c1a15" stroke-width="2" fill="none">
+        <rect x="524" y="108" width="72" height="142"/>
+        <line x1="524" y1="128" x2="596" y2="128"/>
+        <rect x="534" y="150" width="52" height="34" fill="#f6f3ea"/>
+        <line x1="540" y1="160" x2="580" y2="160"/><line x1="540" y1="170" x2="572" y2="170"/>
+      </g>
+      <!-- shelf line -->
+      <line x1="0" y1="260" x2="640" y2="260" stroke="#1c1a15" stroke-width="3"/>
+      <line x1="0" y1="286" x2="640" y2="286" stroke="#1c1a15" stroke-width="1.5"/>
+    </svg>
+  </div>
+</section>
+
+<!-- 2. PROBLEM -->
+<section id="problem">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker mono-detail">THE PROBLEM · SEC 02</span>
+      <h2>Hours of shelf-checking nobody has</h2>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="figure">20.2M</div>
+        <div class="unit mono-detail">staff hours · $894M in labor</div>
+        <p>US hospitals spent 20.2 million staff hours and $894 million in labor managing drug shortages in a single year.</p>
+        <a class="cite" href="https://newsroom.vizientinc.com/press_releases/drug-shortages-cost-hospitals-nearly-900-million-annually-in-labor-costs-new-report">Vizient 2024 drug shortages survey</a>
+      </div>
+      <div class="stat">
+        <div class="figure">66</div>
+        <div class="unit mono-detail">hours a week, per large hospital</div>
+        <p>Large hospitals spend up to 66 staff hours a week working around shortages — searching pages, chasing owners, updating order sets.</p>
+        <a class="cite" href="https://www.ashp.org/drug-shortages/shortage-resources/drug-shortages-survey">ASHP 2024 national survey</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SHELF-GAP SCROLL SCENE: the gap connects to what it touches -->
+<div class="shelf-stage" aria-hidden="true">
+  <div class="shelf-sticky">
+    <div class="wrap">
+      <div class="shelf-scene">
+        <svg class="shelf-svg" viewBox="0 0 800 420">
+          <!-- connectors (drawn as vial lifts out) -->
+          <g fill="none" stroke="#d9820b" stroke-width="2.5" stroke-dasharray="1" pathLength="1">
+            <path class="conn" d="M400 300 C 400 200, 160 200, 160 96" style="stroke-dashoffset: calc(1 - var(--draw, 0));"/>
+            <path class="conn" d="M400 300 L 400 96" style="stroke-dashoffset: calc(1 - var(--draw, 0));"/>
+            <path class="conn" d="M400 300 C 400 200, 640 200, 640 96" style="stroke-dashoffset: calc(1 - var(--draw, 0));"/>
+          </g>
+          <!-- endpoint dots -->
+          <g fill="#d9820b" opacity="var(--draw, 0)">
+            <circle cx="160" cy="96" r="5"/><circle cx="400" cy="96" r="5"/><circle cx="640" cy="96" r="5"/>
+          </g>
+          <!-- shelf -->
+          <g fill="none" stroke="#1c1a15" stroke-width="2">
+            <rect x="140" y="270" width="130" height="120"/>
+            <rect x="270" y="270" width="130" height="120"/>
+            <rect x="400" y="270" width="130" height="120"/>
+            <rect x="530" y="270" width="130" height="120"/>
+          </g>
+          <!-- static items -->
+          <g stroke="#1c1a15" stroke-width="2" fill="none">
+            <rect x="172" y="300" width="50" height="80" rx="5"/>
+            <rect x="180" y="286" width="34" height="14"/>
+            <rect x="176" y="326" width="42" height="36" fill="#f6f3ea"/>
+            <line x1="180" y1="336" x2="214" y2="336"/><line x1="180" y1="344" x2="208" y2="344"/>
+            <rect x="556" y="296" width="80" height="84"/>
+            <line x1="556" y1="312" x2="636" y2="312"/>
+            <rect x="566" y="326" width="60" height="30" fill="#f6f3ea"/>
+          </g>
+          <!-- liftable vial in the gap slot -->
+          <g style="transform: translateY(calc(var(--lift, 0) * -180px));">
+            <g stroke="#d9820b" stroke-width="2.5" fill="none">
+              <rect x="430" y="300" width="70" height="80" rx="5"/>
+              <rect x="442" y="286" width="46" height="14"/>
+              <rect x="436" y="326" width="58" height="38" fill="#f6f3ea"/>
+              <line x1="442" y1="338" x2="488" y2="338"/><line x1="442" y1="348" x2="480" y2="348"/><line x1="442" y1="358" x2="484" y2="358"/>
+            </g>
+          </g>
+          <!-- the gap appears where the vial sat -->
+          <rect x="406" y="276" width="118" height="108" fill="none" stroke="#d9820b" stroke-width="3" stroke-dasharray="8 6" opacity="var(--gap, 0)"/>
+          <line x1="120" y1="390" x2="680" y2="390" stroke="#1c1a15" stroke-width="3"/>
+        </svg>
+        <div class="impact-cards">
+          <div class="impact-card">
+            <span class="tag sticker">PAGE</span>
+            <h3>Insulin infusion protocol</h3>
+            <p>Confluence · PHARM · owner found</p>
+          </div>
+          <div class="impact-card">
+            <span class="tag sticker sticker--red">WORK ITEM</span>
+            <h3>Update OR order set</h3>
+            <p>Jira · PHARM-412 · assignee found</p>
+          </div>
+          <div class="impact-card">
+            <span class="tag sticker sticker--teal">OWNER</span>
+            <h3>Clinical informatics</h3>
+            <p>Teamwork Graph · team mapped</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 3. HOW IT WORKS -->
+<section id="how">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker mono-detail">HOW IT WORKS · SEC 03</span>
+      <h2>Watch. Map. Respond. Mark. Draft. Reverse.</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="shot">
+          <svg viewBox="0 0 300 190" role="img" aria-label="Screenshot placeholder: shortage dashboard">
+            <rect width="300" height="190" fill="#fff"/><rect width="300" height="26" fill="#f6f3ea"/><circle cx="12" cy="13" r="4" fill="#d9820b"/><rect x="24" y="9" width="80" height="8" fill="#d8d3bf"/>
+            <rect x="14" y="40" width="120" height="10" fill="#1c1a15"/><rect x="14" y="58" width="272" height="14" fill="#efead9"/><rect x="14" y="78" width="272" height="14" fill="#efead9"/><rect x="14" y="98" width="200" height="14" fill="#efead9"/>
+            <rect x="200" y="36" width="86" height="18" rx="4" fill="#d9820b"/>
+          </svg>
+        </div>
+        <div><span class="step-num">01</span><span class="sticker">WATCH</span>
+          <h3>Watches the FDA list</h3>
+          <p>Syncs the FDA drug shortage feed on a daily schedule and matches it to your hospital's drug list — by NDC first, then RxNorm ingredient and dosage form.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="shot">
+          <svg viewBox="0 0 300 190" role="img" aria-label="Screenshot placeholder: impact map">
+            <rect width="300" height="190" fill="#fff"/><rect width="300" height="26" fill="#f6f3ea"/><circle cx="12" cy="13" r="4" fill="#d9820b"/>
+            <rect x="14" y="40" width="80" height="60" fill="none" stroke="#d9820b" stroke-width="2" stroke-dasharray="5 4"/>
+            <line x1="94" y1="70" x2="150" y2="50" stroke="#d9820b" stroke-width="2"/><line x1="94" y1="70" x2="150" y2="95" stroke="#d9820b" stroke-width="2"/><line x1="94" y1="70" x2="150" y2="140" stroke="#d9820b" stroke-width="2"/>
+            <rect x="150" y="40" width="136" height="20" fill="#efead9"/><rect x="150" y="85" width="136" height="20" fill="#efead9"/><rect x="150" y="130" width="136" height="20" fill="#efead9"/>
+          </svg>
+        </div>
+        <div><span class="step-num">02</span><span class="sticker">MAP IMPACT</span>
+          <h3>Maps what it touches</h3>
+          <p>Finds the Confluence pages and open Jira work that name the drug, each item's owner and team, and earlier responses to the same drug.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="shot">
+          <svg viewBox="0 0 300 190" role="img" aria-label="Screenshot placeholder: response work item">
+            <rect width="300" height="190" fill="#fff"/><rect width="300" height="26" fill="#f6f3ea"/><circle cx="12" cy="13" r="4" fill="#d9820b"/>
+            <rect x="14" y="40" width="140" height="12" fill="#1c1a15"/><rect x="14" y="60" width="272" height="90" fill="none" stroke="#1c1a15" stroke-width="2"/>
+            <rect x="24" y="72" width="100" height="10" fill="#d8d3bf"/><rect x="24" y="90" width="230" height="8" fill="#efead9"/><rect x="24" y="104" width="230" height="8" fill="#efead9"/><rect x="24" y="118" width="160" height="8" fill="#efead9"/>
+            <rect x="200" y="156" width="86" height="18" rx="4" fill="#b3261e"/>
+          </svg>
+        </div>
+        <div><span class="step-num">03</span><span class="sticker sticker--red">RESPOND</span>
+          <h3>Runs the response in Jira</h3>
+          <p>Opens one work item per shortage, a task per content owner, and a panel with the FDA facts and the impact map — with consent from your admin settings.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="shot">
+          <svg viewBox="0 0 300 190" role="img" aria-label="Screenshot placeholder: page notice">
+            <rect width="300" height="190" fill="#fff"/><rect width="300" height="26" fill="#f6f3ea"/><circle cx="12" cy="13" r="4" fill="#d9820b"/>
+            <rect x="14" y="40" width="180" height="12" fill="#1c1a15"/><rect x="14" y="58" width="250" height="8" fill="#d8d3bf"/><rect x="14" y="72" width="230" height="8" fill="#d8d3bf"/>
+            <rect x="14" y="96" width="272" height="30" fill="#d9820b"/><rect x="22" y="104" width="140" height="12" fill="#1c1a15"/>
+            <rect x="14" y="140" width="230" height="8" fill="#d8d3bf"/><rect x="14" y="154" width="180" height="8" fill="#d8d3bf"/>
+          </svg>
+        </div>
+        <div><span class="step-num">04</span><span class="sticker">MARK PAGES</span>
+          <h3>Marks affected pages</h3>
+          <p>Shows a notice on each affected Confluence page — visible in the byline — linking straight to the Jira response.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="shot">
+          <svg viewBox="0 0 300 190" role="img" aria-label="Screenshot placeholder: agent draft">
+            <rect width="300" height="190" fill="#fff"/><rect width="300" height="26" fill="#f6f3ea"/><circle cx="12" cy="13" r="4" fill="#d9820b"/>
+            <rect x="14" y="40" width="60" height="60" rx="8" fill="#efead9"/><rect x="86" y="44" width="200" height="10" fill="#d8d3bf"/><rect x="86" y="60" width="180" height="8" fill="#efead9"/><rect x="86" y="74" width="190" height="8" fill="#efead9"/>
+            <rect x="14" y="116" width="272" height="50" fill="none" stroke="#1c1a15" stroke-width="2"/>
+            <rect x="24" y="128" width="140" height="8" fill="#d8d3bf"/><rect x="24" y="144" width="100" height="8" fill="#d8d3bf"/>
+            <rect x="196" y="130" width="80" height="22" rx="4" fill="#0e7a66"/>
+          </svg>
+        </div>
+        <div><span class="step-num">05</span><span class="sticker sticker--teal">DRAFT</span>
+          <h3>Drafts from your own history</h3>
+          <p>A Rovo agent drafts the conservation plan and clinician message from your site's own past decisions. A person approves before anything is written.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="shot">
+          <svg viewBox="0 0 300 190" role="img" aria-label="Screenshot placeholder: reversal tasks">
+            <rect width="300" height="190" fill="#fff"/><rect width="300" height="26" fill="#f6f3ea"/><circle cx="12" cy="13" r="4" fill="#0e7a66"/>
+            <rect x="14" y="44" width="20" height="20" fill="none" stroke="#0e7a66" stroke-width="2"/><rect x="44" y="48" width="200" height="10" fill="#d8d3bf"/>
+            <rect x="14" y="80" width="20" height="20" fill="none" stroke="#0e7a66" stroke-width="2"/><rect x="44" y="84" width="180" height="10" fill="#d8d3bf"/>
+            <rect x="14" y="116" width="20" height="20" fill="none" stroke="#1c1a15" stroke-width="2"/><rect x="44" y="120" width="160" height="10" fill="#d8d3bf"/>
+            <rect x="14" y="152" width="86" height="18" rx="4" fill="#0e7a66"/>
+          </svg>
+        </div>
+        <div><span class="step-num">06</span><span class="sticker sticker--teal">REVERSE</span>
+          <h3>Reverses the workarounds</h3>
+          <p>When the FDA marks the shortage resolved, opens a task for every temporary change and clears the page notices.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. WHAT IT WILL NOT DO -->
+<section id="never">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker mono-detail">BOUNDARIES · SEC 04</span>
+      <h2>What it will not do</h2>
+    </div>
+    <ul class="never">
+      <li><strong>Holds no patient data</strong><p>Never asks for, stores or displays patient information. Inbound data is public FDA and NLM drug data only. Nothing about your site is sent to an outside host.</p></li>
+      <li><strong>Never recommends a substitute drug</strong><p>No clinical advice. It shows only alternatives your own pages already approve, quoted with a link — and says so when none are documented.</p></li>
+      <li><strong>Shows no unsourced fact</strong><p>Every statement links to its FDA record, Confluence page or Jira work item. If a scope or product is unreadable, the app says what it could not read.</p></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 5. DEMO VIDEO -->
+<section id="demo">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker mono-detail">DEMO · SEC 05</span>
+      <h2>Watch it work</h2>
+    </div>
+    <div class="video-shell">
+      <button class="video-facade" data-embed="{{demoVideoUrl}}" aria-label="Play the Shortfall demo video">
+        <span class="play" aria-hidden="true">
+          <svg width="30" height="34" viewBox="0 0 30 34"><path d="M2 2 L28 17 L2 32 Z" fill="#1c1a15"/></svg>
+        </span>
+        <span class="hint">Loads YouTube only when you press play</span>
+      </button>
+    </div>
+  </div>
+</section>
+
+<!-- 6. WORKS WITH -->
+<section id="works-with">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker mono-detail">WORKS WITH · SEC 06</span>
+      <h2>Inside the tools you already have</h2>
+    </div>
+    <div class="works-with">
+      <span class="sticker sticker--plain">Jira</span>
+      <span class="sticker sticker--plain">Confluence</span>
+      <span class="sticker sticker--plain">Rovo</span>
+      <span class="sticker sticker--plain">Teamwork Graph</span>
+      <span class="sticker sticker--plain">Atlassian MCP</span>
+    </div>
+  </div>
+</section>
+
+<!-- 7. INSTALL -->
+<section id="install">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker mono-detail">INSTALL · SEC 07</span>
+      <h2>Running on your site in minutes</h2>
+    </div>
+    <ol class="install-steps">
+      <li>Install Shortfall from the <a href="{{installUrl}}">installation link</a> on a site with Rovo enabled.</li>
+      <li>Grant the Teamwork Graph scopes when prompted — an organization admin approves them.</li>
+      <li>Open <strong>Shortfall</strong> in Jira's Apps menu and choose which Confluence spaces hold clinical content.</li>
+      <li>Add your drug list — paste, upload a CSV, or load the sample hospital.</li>
+      <li>Run the first sync. Matched shortages, impact maps and owners appear on the dashboard.</li>
+    </ol>
+    <p><a href="{{docsUrl}}">Full install and configuration guide</a></p>
+    <p style="margin-top:18px"><a class="btn" href="{{installUrl}}">Install on your site</a></p>
+  </div>
+</section>
+
+</main>
+
+<!-- 8. FOOTER -->
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <h3>Shortfall</h3>
+        <p style="font-size:0.8rem;max-width:36em">Drug shortage response for Jira and Confluence. No patient data is collected, stored or displayed; the app reads public FDA and NLM drug data and your site's own content, and sends nothing about your site to outside hosts.</p>
+      </div>
+      <div>
+        <h3>Site</h3>
+        <ul>
+          <li><a href="/setup">Setup guide</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/support">Support</a></li>
+          <li><a href="{{repoUrl}}">Source code</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Contact</h3>
+        <ul>
+          <li><a href="mailto:{{supportEmail}}">{{supportEmail}}</a></li>
+          <li><a href="{{issueUrl}}">Report an issue</a></li>
+        </ul>
+      </div>
+    </div>
+    <p class="fine-print">Shortfall is an independent app and is not affiliated with or endorsed by Atlassian or the FDA. openFDA data is unvalidated: do not rely on it to make decisions regarding medical care. Built for the Atlassian Codegeist 2026 hackathon.</p>
+  </div>
+</footer>
+
+<script src="/assets/js/main.js" defer></script>
+</body>
+</html>

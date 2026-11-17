@@ -1,0 +1,207 @@
+{
+  "meta": {
+    "disclaimer": "Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.",
+    "terms": "https://open.fda.gov/terms/",
+    "license": "https://open.fda.gov/license/",
+    "last_updated": "2026-11-13",
+    "results": {
+      "skip": 0,
+      "limit": 10,
+      "total": 3
+    }
+  },
+  "results": [
+    {
+      "discontinued_date": "10/30/2026",
+      "update_type": "New",
+      "initial_posting_date": "10/30/2026",
+      "package_ndc": "0338-3508-41",
+      "generic_name": "Cefazolin in Dextrose Injection",
+      "contact_info": "888-229-0001",
+      "related_info": "Discontinuation of the manufacture of the drug",
+      "openfda": {
+        "application_number": [
+          "NDA207131"
+        ],
+        "brand_name": [
+          "CEFAZOLIN"
+        ],
+        "generic_name": [
+          "CEFAZOLIN SODIUM"
+        ],
+        "manufacturer_name": [
+          "Baxter Healthcare Corporation"
+        ],
+        "product_ndc": [
+          "0338-3508",
+          "0338-3503",
+          "0338-0096"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "INTRAVENOUS"
+        ],
+        "substance_name": [
+          "CEFAZOLIN SODIUM"
+        ],
+        "rxcui": [
+          "1665050",
+          "1665060",
+          "2630753"
+        ],
+        "spl_id": [
+          "092b9ea3-0c78-4236-80c9-ff97d09fa14e"
+        ],
+        "spl_set_id": [
+          "d91a8d13-99a0-4d87-88dc-71cbd37922b4"
+        ],
+        "package_ndc": [
+          "0338-3508-41",
+          "0338-3503-41",
+          "0338-0096-06"
+        ],
+        "unii": [
+          "P380M0454Z"
+        ]
+      },
+      "update_date": "10/30/2026",
+      "therapeutic_category": [
+        "Anti-Infective"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Cefazolin in Dextrose, Injection, 2g/100mL (NDC 0338-3508-41)",
+      "company_name": "Baxter Healthcare",
+      "status": "To Be Discontinued"
+    },
+    {
+      "discontinued_date": "10/30/2026",
+      "update_type": "New",
+      "initial_posting_date": "10/30/2026",
+      "package_ndc": "0338-0096-06",
+      "generic_name": "Cefazolin in Dextrose Injection",
+      "contact_info": "888-229-0001",
+      "related_info": "Discontinuation of the manufacture of the drug",
+      "openfda": {
+        "application_number": [
+          "NDA207131"
+        ],
+        "brand_name": [
+          "CEFAZOLIN"
+        ],
+        "generic_name": [
+          "CEFAZOLIN SODIUM"
+        ],
+        "manufacturer_name": [
+          "Baxter Healthcare Corporation"
+        ],
+        "product_ndc": [
+          "0338-0096",
+          "0338-3508",
+          "0338-3503"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "INTRAVENOUS"
+        ],
+        "substance_name": [
+          "CEFAZOLIN SODIUM"
+        ],
+        "rxcui": [
+          "1665050",
+          "1665060",
+          "2630753"
+        ],
+        "spl_id": [
+          "092b9ea3-0c78-4236-80c9-ff97d09fa14e"
+        ],
+        "spl_set_id": [
+          "d91a8d13-99a0-4d87-88dc-71cbd37922b4"
+        ],
+        "package_ndc": [
+          "0338-3508-41",
+          "0338-3503-41",
+          "0338-0096-06"
+        ],
+        "unii": [
+          "P380M0454Z"
+        ]
+      },
+      "update_date": "10/30/2026",
+      "therapeutic_category": [
+        "Anti-Infective"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Cefazolin in Dextrose, Injection, 3g/150mL (NDC 0338-0096-06)",
+      "company_name": "Baxter Healthcare",
+      "status": "To Be Discontinued"
+    },
+    {
+      "discontinued_date": "10/30/2026",
+      "update_type": "New",
+      "initial_posting_date": "10/30/2026",
+      "package_ndc": "0338-3503-41",
+      "generic_name": "Cefazolin in Dextrose Injection",
+      "contact_info": "888-229-0001",
+      "related_info": "Discontinuation of the manufacture of the drug",
+      "openfda": {
+        "application_number": [
+          "NDA207131"
+        ],
+        "brand_name": [
+          "CEFAZOLIN"
+        ],
+        "generic_name": [
+          "CEFAZOLIN SODIUM"
+        ],
+        "manufacturer_name": [
+          "Baxter Healthcare Corporation"
+        ],
+        "product_ndc": [
+          "0338-3503",
+          "0338-3508",
+          "0338-0096"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "INTRAVENOUS"
+        ],
+        "substance_name": [
+          "CEFAZOLIN SODIUM"
+        ],
+        "rxcui": [
+          "1665050",
+          "1665060",
+          "2630753"
+        ],
+        "spl_id": [
+          "092b9ea3-0c78-4236-80c9-ff97d09fa14e"
+        ],
+        "spl_set_id": [
+          "d91a8d13-99a0-4d87-88dc-71cbd37922b4"
+        ],
+        "package_ndc": [
+          "0338-3508-41",
+          "0338-3503-41",
+          "0338-0096-06"
+        ],
+        "unii": [
+          "P380M0454Z"
+        ]
+      },
+      "update_date": "10/30/2026",
+      "therapeutic_category": [
+        "Anti-Infective"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Cefazolin in Dextrose, Injection, 1g/50 mL (NDC 0338-3503-41)",
+      "company_name": "Baxter Healthcare",
+      "status": "To Be Discontinued"
+    }
+  ]
+}

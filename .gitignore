@@ -1,0 +1,8 @@
+node_modules/
+.idea/
+.forge/
+.env
+dist/
+*.local
+landing/dist/
+landing/node_modules/

@@ -1,0 +1,13 @@
+{
+  "_comment": "Single source of truth for every outbound link on the Shortfall site. Fill in real values before public launch; the build script injects them into every page.",
+  "siteName": "Shortfall",
+  "installUrl": "https://developer.atlassian.com/console/install/TODO-installation-link",
+  "demoVideoUrl": "https://www.youtube-nocookie.com/embed/TODO_VIDEO_ID",
+  "demoVideoWatchUrl": "https://www.youtube.com/watch?v=TODO_VIDEO_ID",
+  "repoUrl": "https://github.com/TODO-org/shortfall",
+  "issueUrl": "https://github.com/TODO-org/shortfall/issues",
+  "supportEmail": "support@TODO-shortfall.example",
+  "docsUrl": "/setup",
+  "fdaCountFallback": "1114",
+  "fdaCountFallbackDate": "2026-11-13"
+}

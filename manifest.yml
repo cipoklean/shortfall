@@ -1,0 +1,246 @@
+modules:
+  jira:globalPage:
+    - key: shortfall-dashboard
+      resource: dashboard-ui
+      resolver:
+        function: ui-resolver
+      title: Shortfall
+      layout: blank
+
+  jira:issuePanel:
+    - key: shortage-response-panel
+      resource: issue-panel-ui
+      resolver:
+        function: ui-resolver
+      title: Shortage response
+      icon: resource:icons;icon-alert.svg
+
+  confluence:contentBylineItem:
+    - key: shortage-page-notice
+      resource: byline-ui
+      title: Shortfall
+      tooltip: Drug shortage status for this page
+      icon: resource:icons;icon-alert.svg
+      viewportSize: medium
+      viewportContainer: popup
+      dynamicProperties:
+        function: fn-byline-props
+
+  scheduledTrigger:
+    - key: daily-shortage-sync
+      function: sync-scheduled
+      interval: day
+
+  consumer:
+    - key: sync-queue-consumer
+      queue: sync-queue
+      function: sync-worker
+
+  action:
+    - key: get-active-shortages
+      name: Get active shortages
+      function: fn-active-shortages
+      actionVerb: GET
+      description: |
+        List drug shortages currently marked Current by the FDA that match
+        this site's formulary. Returns one row per FDA presentation (NDC),
+        never merged across strengths or forms.
+      inputs:
+        ingredient:
+          title: Ingredient
+          type: string
+          required: false
+          description: Optional ingredient name to filter by
+    - key: get-shortage-impact
+      name: Get shortage impact
+      function: fn-shortage-impact
+      actionVerb: GET
+      description: |
+        For a shortage, list the Confluence pages and open Jira work that name
+        the drug, with the owner and team of each and how each item was found.
+      inputs:
+        shortageId:
+          title: Shortage ID
+          type: string
+          required: true
+          description: The shortage identifier returned by get-active-shortages
+    - key: get-past-responses
+      name: Get past responses
+      function: fn-past-responses
+      actionVerb: GET
+      description: |
+        Earlier responses to the same drug or ingredient, with linked Jira work
+        items and the decisions recorded on them.
+      inputs:
+        ingredient:
+          title: Ingredient
+          type: string
+          required: true
+          description: Ingredient name to look up earlier responses for
+    - key: get-response-status
+      name: Get response status
+      function: fn-response-status
+      actionVerb: GET
+      description: |
+        Status of the Jira response for a shortage: work item, per-owner tasks,
+        temporary changes and reversal state.
+      inputs:
+        shortageId:
+          title: Shortage ID
+          type: string
+          required: true
+          description: The shortage identifier
+    - key: draft-clinician-message
+      name: Draft clinician message
+      function: fn-draft-message
+      actionVerb: GET
+      description: |
+        Structured facts for drafting a conservation plan and clinician
+        message: FDA facts, the impact map, and the site's own past decisions.
+        The agent writes the draft; a person approves before anything is sent.
+      inputs:
+        shortageId:
+          title: Shortage ID
+          type: string
+          required: true
+          description: The shortage identifier
+    - key: create-response-task
+      name: Create response task
+      function: fn-create-task
+      actionVerb: CREATE
+      description: |
+        Create a Jira task assigned to a content owner for a shortage response.
+        Always confirm with the person before calling this action.
+      inputs:
+        shortageId:
+          title: Shortage ID
+          type: string
+          required: true
+          description: The shortage identifier
+        ownerAccountId:
+          title: Owner account ID
+          type: string
+          required: true
+          description: Atlassian account ID of the content owner
+        summary:
+          title: Task summary
+          type: string
+          required: true
+          description: Short task summary, e.g. "Review insulin protocol for shortage"
+
+  rovo:agent:
+    - key: shortage-agent
+      name: Shortfall
+      description: |
+        Helps pharmacy and clinical informatics teams respond to FDA drug
+        shortages: what is affected, who owns it, what was decided last time,
+        and drafting the conservation plan for approval.
+      prompt: resource:prompts;shortage-agent.md
+      conversationStarters:
+        - "Which shortages affect our protocols right now?"
+        - "What does the cefazolin shortage affect and what did we do last time?"
+        - "Draft a conservation plan for the latest shortage."
+        - "Which temporary changes still need to be reversed?"
+      actions:
+        - get-active-shortages
+        - get-shortage-impact
+        - get-past-responses
+        - get-response-status
+        - draft-clinician-message
+        - create-response-task
+      skills:
+        - drug-shortage-response
+
+  rovo:skill:
+    - key: drug-shortage-response
+      source:
+        dir: skills/drug-shortage-response
+      dependencies:
+        tools:
+          - get-active-shortages
+          - get-shortage-impact
+          - get-past-responses
+          - get-response-status
+          - draft-clinician-message
+          - create-response-task
+
+  rovo:mcp:
+    - key: shortfall-mcp
+      name: Shortfall
+      tools:
+        - get-active-shortages
+        - get-shortage-impact
+        - get-past-responses
+        - get-response-status
+        - draft-clinician-message
+
+  sql:
+    - key: main
+      engine: mysql
+
+  function:
+    - key: ui-resolver
+      handler: index.handler
+    - key: fn-byline-props
+      handler: index.bylineProps
+    - key: sync-scheduled
+      handler: index.syncScheduled
+      timeoutSeconds: 55
+    - key: sync-worker
+      handler: index.syncWorker
+      timeoutSeconds: 900
+    - key: fn-active-shortages
+      handler: index.getActiveShortages
+    - key: fn-shortage-impact
+      handler: index.getShortageImpact
+    - key: fn-past-responses
+      handler: index.getPastResponses
+    - key: fn-response-status
+      handler: index.getResponseStatus
+    - key: fn-draft-message
+      handler: index.draftClinicianMessage
+    - key: fn-create-task
+      handler: index.createResponseTask
+
+resources:
+  - key: dashboard-ui
+    path: static/dashboard
+  - key: issue-panel-ui
+    path: static/issue-panel
+  - key: byline-ui
+    path: static/byline
+  - key: icons
+    path: static/icons
+  - key: prompts
+    path: src/prompts
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+    - read:confluence-content.all
+    - read:confluence-space.summary
+    - read:confluence-user
+    - storage:app
+    - read:graph:user:atlassian
+    - read:graph:team:atlassian
+    - read:graph:page:confluence
+    - read:graph:issue:jira
+  external:
+    fetch:
+      backend:
+        - address: api.fda.gov
+          inScopeEUD: false
+        - address: rxnav.nlm.nih.gov
+          inScopeEUD: false
+  content:
+    styles:
+      - "unsafe-inline"
+
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 512
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/7d933213-b315-4322-ad8e-cdc7b45de7c3

@@ -1,0 +1,410 @@
+{
+  "meta": {
+    "disclaimer": "Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.",
+    "terms": "https://open.fda.gov/terms/",
+    "license": "https://open.fda.gov/license/",
+    "last_updated": "2026-11-13",
+    "results": {
+      "skip": 0,
+      "limit": 5,
+      "total": 59
+    }
+  },
+  "results": [
+    {
+      "update_type": "Revised",
+      "initial_posting_date": "03/10/2023",
+      "change_date": "11/04/2026",
+      "package_ndc": "16729-136-00",
+      "generic_name": "Clonazepam Tablet",
+      "contact_info": "866-941-7875, option 2",
+      "resolved_note": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA077147"
+        ],
+        "brand_name": [
+          "CLONAZEPAM"
+        ],
+        "generic_name": [
+          "CLONAZEPAM"
+        ],
+        "manufacturer_name": [
+          "Accord Healthcare Inc."
+        ],
+        "product_ndc": [
+          "16729-136",
+          "16729-137",
+          "16729-138"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "ORAL"
+        ],
+        "substance_name": [
+          "CLONAZEPAM"
+        ],
+        "rxcui": [
+          "197527",
+          "197528",
+          "197529"
+        ],
+        "spl_id": [
+          "0e1e7f41-f78b-27cf-e063-6394a90a1ae0"
+        ],
+        "spl_set_id": [
+          "ebc11109-e7bf-452d-b675-4b3236d54164"
+        ],
+        "package_ndc": [
+          "16729-136-00",
+          "16729-136-16",
+          "16729-137-00",
+          "16729-137-16",
+          "16729-138-00",
+          "16729-138-16"
+        ],
+        "nui": [
+          "N0000175694",
+          "M0002356"
+        ],
+        "pharm_class_epc": [
+          "Benzodiazepine [EPC]"
+        ],
+        "pharm_class_cs": [
+          "Benzodiazepines [CS]"
+        ],
+        "unii": [
+          "5PE9FDE8GB"
+        ]
+      },
+      "update_date": "11/04/2026",
+      "therapeutic_category": [
+        "Neurology",
+        "Pediatric",
+        "Psychiatry"
+      ],
+      "dosage_form": "Tablet",
+      "presentation": "Clonazepam, Tablet, .5 mg (NDC 16729-136-00)",
+      "company_name": "Accord Healthcare Inc.",
+      "status": "Resolved"
+    },
+    {
+      "update_type": "Revised",
+      "initial_posting_date": "03/10/2023",
+      "change_date": "11/04/2026",
+      "package_ndc": "72888-153-30",
+      "generic_name": "Clonazepam Tablet",
+      "contact_info": "sales@advagenpharma.com",
+      "resolved_note": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA075468"
+        ],
+        "brand_name": [
+          "CLONAZEPAM"
+        ],
+        "generic_name": [
+          "CLONAZEPAM"
+        ],
+        "manufacturer_name": [
+          "Advagen Pharma Ltd"
+        ],
+        "product_ndc": [
+          "72888-153",
+          "72888-497",
+          "72888-152",
+          "72888-154"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "ORAL"
+        ],
+        "substance_name": [
+          "CLONAZEPAM"
+        ],
+        "rxcui": [
+          "197527",
+          "197528",
+          "197529",
+          "204892"
+        ],
+        "spl_id": [
+          "5510f17b-a980-f412-e063-6394a90ae1c4"
+        ],
+        "spl_set_id": [
+          "30d674f9-f1b3-4c2d-a8e9-3bc8e476f1ec"
+        ],
+        "package_ndc": [
+          "72888-497-01",
+          "72888-497-02",
+          "72888-497-03",
+          "72888-497-04",
+          "72888-152-30",
+          "72888-152-01",
+          "72888-152-05",
+          "72888-152-00",
+          "72888-153-30",
+          "72888-153-01",
+          "72888-153-05",
+          "72888-153-00",
+          "72888-154-30",
+          "72888-154-01",
+          "72888-154-05",
+          "72888-154-00"
+        ],
+        "nui": [
+          "N0000175694",
+          "M0002356"
+        ],
+        "pharm_class_epc": [
+          "Benzodiazepine [EPC]"
+        ],
+        "pharm_class_cs": [
+          "Benzodiazepines [CS]"
+        ],
+        "unii": [
+          "5PE9FDE8GB"
+        ]
+      },
+      "update_date": "11/04/2026",
+      "therapeutic_category": [
+        "Neurology",
+        "Pediatric",
+        "Psychiatry"
+      ],
+      "dosage_form": "Tablet",
+      "presentation": "Clonazepam, Tablet, 1 mg (NDC 72888-153-30)",
+      "company_name": "Rubicon Research Private Limited",
+      "status": "Resolved"
+    },
+    {
+      "update_type": "Revised",
+      "initial_posting_date": "12/13/2017",
+      "change_date": "09/30/2026",
+      "package_ndc": "72205-102-07",
+      "generic_name": "Bumetanide Injection",
+      "contact_info": "855-668-2369; customerservice@novadozpharma.com",
+      "resolved_note": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA215364"
+        ],
+        "brand_name": [
+          "BUMETANIDE"
+        ],
+        "generic_name": [
+          "BUMETANIDE"
+        ],
+        "manufacturer_name": [
+          "Novadoz Pharmaceuticals LLC"
+        ],
+        "product_ndc": [
+          "72205-102",
+          "72205-101"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "INTRAMUSCULAR",
+          "INTRAVENOUS"
+        ],
+        "substance_name": [
+          "BUMETANIDE"
+        ],
+        "rxcui": [
+          "282486",
+          "1727569"
+        ],
+        "spl_id": [
+          "387edfd4-be85-41cd-8a6d-14e6a022b5a9"
+        ],
+        "spl_set_id": [
+          "387edfd4-be85-41cd-8a6d-14e6a022b5a9"
+        ],
+        "package_ndc": [
+          "72205-101-01",
+          "72205-101-07",
+          "72205-102-01",
+          "72205-102-07"
+        ],
+        "nui": [
+          "N0000175366",
+          "N0000175590"
+        ],
+        "pharm_class_pe": [
+          "Increased Diuresis at Loop of Henle [PE]"
+        ],
+        "pharm_class_epc": [
+          "Loop Diuretic [EPC]"
+        ],
+        "unii": [
+          "0Y2S3XUQ5H"
+        ]
+      },
+      "update_date": "09/30/2026",
+      "therapeutic_category": [
+        "Cardiovascular"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Bumetanide, Injection, 0.25 mg/1 mL (NDC 72205-102-07)",
+      "company_name": "MSN Laboratories Private Limited",
+      "status": "Resolved"
+    },
+    {
+      "update_type": "Revised",
+      "initial_posting_date": "03/25/2020",
+      "change_date": "08/06/2026",
+      "package_ndc": "0088-2102-24",
+      "generic_name": "Rifapentine Tablet, Film Coated",
+      "contact_info": "800-633-1610 Option 7",
+      "resolved_note": "Available",
+      "openfda": {
+        "application_number": [
+          "NDA021024"
+        ],
+        "brand_name": [
+          "PRIFTIN"
+        ],
+        "generic_name": [
+          "RIFAPENTINE"
+        ],
+        "manufacturer_name": [
+          "sanofi-aventis U.S. LLC"
+        ],
+        "product_ndc": [
+          "0088-2102"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "ORAL"
+        ],
+        "substance_name": [
+          "RIFAPENTINE"
+        ],
+        "rxcui": [
+          "242671",
+          "261101"
+        ],
+        "spl_id": [
+          "83c11919-ca6d-49f5-8f9f-7b8405fcbaec"
+        ],
+        "spl_set_id": [
+          "3a64fb70-b85e-43d9-8bcd-7e893f568ae1"
+        ],
+        "package_ndc": [
+          "0088-2102-01",
+          "0088-2102-24"
+        ],
+        "nui": [
+          "N0000175501",
+          "M0019113"
+        ],
+        "pharm_class_epc": [
+          "Rifamycin Antimycobacterial [EPC]"
+        ],
+        "pharm_class_cs": [
+          "Rifamycins [CS]"
+        ],
+        "unii": [
+          "XJM390A33U"
+        ]
+      },
+      "update_date": "08/06/2026",
+      "therapeutic_category": [
+        "Anti-Infective"
+      ],
+      "dosage_form": "Tablet",
+      "presentation": "Priftin, Tablet, Film Coated, 150 mg (NDC 0088-2102-24)",
+      "company_name": "Sanofi-Aventis U.S. LLC",
+      "status": "Resolved"
+    },
+    {
+      "update_type": "Revised",
+      "initial_posting_date": "03/10/2023",
+      "change_date": "11/04/2026",
+      "package_ndc": "43547-406-11",
+      "generic_name": "Clonazepam Tablet",
+      "contact_info": "For orders, Solco Healthcare 866-931-9829",
+      "resolved_note": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA077856"
+        ],
+        "brand_name": [
+          "CLONAZEPAM"
+        ],
+        "generic_name": [
+          "CLONAZEPAM"
+        ],
+        "manufacturer_name": [
+          "Solco Healthcare LLC"
+        ],
+        "product_ndc": [
+          "43547-406",
+          "43547-407",
+          "43547-408"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "ORAL"
+        ],
+        "substance_name": [
+          "CLONAZEPAM"
+        ],
+        "rxcui": [
+          "197527",
+          "197528",
+          "197529"
+        ],
+        "spl_id": [
+          "dc17b9d4-2890-4f6c-8476-daa39d0cbc9c"
+        ],
+        "spl_set_id": [
+          "4acbb7a9-4db5-4497-b8db-9f358b3f6fb4"
+        ],
+        "package_ndc": [
+          "43547-406-10",
+          "43547-406-50",
+          "43547-406-11",
+          "43547-407-10",
+          "43547-407-50",
+          "43547-407-11",
+          "43547-408-10",
+          "43547-408-50"
+        ],
+        "nui": [
+          "N0000175694",
+          "M0002356"
+        ],
+        "pharm_class_epc": [
+          "Benzodiazepine [EPC]"
+        ],
+        "pharm_class_cs": [
+          "Benzodiazepines [CS]"
+        ],
+        "unii": [
+          "5PE9FDE8GB"
+        ]
+      },
+      "update_date": "11/04/2026",
+      "therapeutic_category": [
+        "Neurology",
+        "Pediatric",
+        "Psychiatry"
+      ],
+      "dosage_form": "Tablet",
+      "presentation": "Clonazepam, Tablet, .5 mg (NDC 43547-406-11)",
+      "company_name": "Prinston Pharmaceutical, Inc.",
+      "status": "Resolved"
+    }
+  ]
+}

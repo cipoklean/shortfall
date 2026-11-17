@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install and setup — Shortfall</title>
+<meta name="description" content="Install Shortfall on an Atlassian Cloud site with Rovo, grant Teamwork Graph scopes, and run the first drug shortage sync.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Shortfall home">
+      <svg width="26" height="26" viewBox="0 0 40 40" aria-hidden="true"><rect x="9" y="7" width="22" height="26" fill="none" stroke="#1c1a15" stroke-width="2.4" stroke-dasharray="5 3.5"/><line x1="4" y1="36" x2="36" y2="36" stroke="#1c1a15" stroke-width="3"/></svg>
+      Shortfall
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/setup">Setup</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
+      <a class="nav-cta" href="{{installUrl}}">Install</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="page-body">
+<section>
+  <div class="wrap">
+    <span class="mono-detail rx-code">GUIDE · INSTALL · REV 2026-11</span>
+    <h1 style="font-size:clamp(2rem,5vw,3rem)">Install and setup</h1>
+
+    <div class="callout callout--amber">
+      <strong>Requires an Atlassian Cloud site with Rovo enabled.</strong>
+      Shortfall's drafting features run through the Rovo agent. Jira and
+      Confluence must both be present on the site.
+    </div>
+
+    <h2>1. Install the app</h2>
+    <p>Open the <a href="{{installUrl}}">installation link</a>, pick your site and confirm the requested scopes.</p>
+    <ul>
+      <li>Jira scopes let Shortfall read open work and create response items — writes happen only when your admin enables them or a person confirms.</li>
+      <li>Confluence scopes let it search your pages and show shortage notices.</li>
+      <li>Outbound network access is limited to <code>api.fda.gov</code> and <code>rxnav.nlm.nih.gov</code> (public drug data). Nothing about your site leaves it.</li>
+    </ul>
+
+    <h2>2. Grant Teamwork Graph scopes <span class="mono-detail">(organization admin)</span></h2>
+    <p>Owner and team lookups run through the Teamwork Graph API. An organization admin grants the granular scopes in Atlassian Administration:</p>
+    <ol>
+      <li>Go to <strong>Atlassian Administration → Apps → your site → Connected apps</strong>.</li>
+      <li>Select <strong>Shortfall</strong>, open <strong>Permissions</strong>.</li>
+      <li>Enable the Teamwork Graph scopes: users, teams, Confluence pages, Jira work items.</li>
+    </ol>
+    <div class="callout">
+      Scope changes take about a minute to apply. If a scope is left off, the
+      app keeps working in <em>reduced mode</em> and lists what it could not
+      read on the dashboard — nothing fails silently.
+    </div>
+
+    <h2>3. First-run setup</h2>
+    <ol class="install-steps">
+      <li>Open <strong>Apps → Shortfall</strong> in Jira. The setup screen appears.</li>
+      <li><strong>Choose clinical spaces</strong> — pick the Confluence spaces that hold protocols, order sets and guidelines. Only these count in the impact map.</li>
+      <li><strong>Add the drug list</strong> — paste rows, upload a CSV (<code>name, ndc, form</code>), or load the sample hospital for a realistic demo.</li>
+      <li><strong>Pick a response mode</strong> — automatic (a Jira work item opens per new matched shortage) or manual (review first, create on demand).</li>
+      <li><strong>Choose the response project</strong> — the Jira project response items live in.</li>
+      <li><strong>Run the first sync</strong> — the FDA list is fetched, matched, and the impact map is built. Progress is shown live.</li>
+    </ol>
+
+    <h2>4. Daily operation</h2>
+    <p>A scheduled trigger syncs once a day. From the dashboard you can run <strong>Sync now</strong>, see the last run's result, exposure by space, overdue tasks and time from FDA posting to response.</p>
+
+    <h2>5. The agent</h2>
+    <p>Find <strong>Shortfall</strong> in Rovo Chat. Ask things like <em>"What does the cefazolin shortage affect and what did we do last time?"</em> The agent answers with linked sources, and drafts conservation plans for approval — it never recommends a substitute drug on its own.</p>
+
+    <h2>6. Removing the sample hospital</h2>
+    <p>If you loaded the sample hospital, the setup screen's remove button deletes exactly the space, pages, drug list and Jira project it created — nothing else.</p>
+
+    <p style="margin-top:32px"><a class="btn" href="{{installUrl}}">Install on your site</a> <a class="btn btn--ghost" href="/">Back to home</a></p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p class="fine-print">Shortfall is an independent app and is not affiliated with or endorsed by Atlassian or the FDA. openFDA data is unvalidated: do not rely on it to make decisions regarding medical care.</p>
+  </div>
+</footer>
+<script src="/assets/js/main.js" defer></script>
+</body>
+</html>

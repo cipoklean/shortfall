@@ -1,0 +1,29 @@
+{
+  "name": "shortfall",
+  "version": "0.1.0",
+  "description": "Shortfall - drug shortage response for Jira and Confluence (Forge app)",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "deploy": "forge deploy -e development --non-interactive",
+    "forge:lint": "forge lint",
+    "landing:build": "node landing/build.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "eslint": "^9.39.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@forge/api": "^7.0.0",
+    "@forge/events": "^3.0.10",
+    "@forge/kvs": "^1.2.0",
+    "@forge/resolver": "^1.7.0",
+    "@forge/sql": "^2.0.0"
+  }
+}

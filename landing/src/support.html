@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Shortfall</title>
+<meta name="description" content="Get help with Shortfall: documentation, issue tracker and contact.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/css/site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Shortfall home">
+      <svg width="26" height="26" viewBox="0 0 40 40" aria-hidden="true"><rect x="9" y="7" width="22" height="26" fill="none" stroke="#1c1a15" stroke-width="2.4" stroke-dasharray="5 3.5"/><line x1="4" y1="36" x2="36" y2="36" stroke="#1c1a15" stroke-width="3"/></svg>
+      Shortfall
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/setup">Setup</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
+      <a class="nav-cta" href="{{installUrl}}">Install</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="page-body">
+<section>
+  <div class="wrap">
+    <span class="mono-detail rx-code">SUPPORT · SEC 09</span>
+    <h1 style="font-size:clamp(2rem,5vw,3rem)">Support</h1>
+
+    <h2>Documentation</h2>
+    <ul>
+      <li><a href="/setup">Install and configuration guide</a></li>
+      <li><a href="/privacy">Privacy — what the app reads, stores and sends</a></li>
+      <li><a href="{{repoUrl}}">Source code and README</a></li>
+    </ul>
+
+    <h2>Report a problem</h2>
+    <p>Open an issue on the <a href="{{issueUrl}}">issue tracker</a> with:</p>
+    <ul>
+      <li>What you expected and what happened instead</li>
+      <li>The sync run result from the dashboard, if relevant</li>
+      <li>Whether the app is in reduced mode (the dashboard lists unreadable scopes)</li>
+    </ul>
+    <div class="callout callout--red">
+      Never include patient information in a report — Shortfall does not handle
+      it and neither should a bug report.
+    </div>
+
+    <h2>Contact</h2>
+    <p><a href="mailto:{{supportEmail}}">{{supportEmail}}</a></p>
+
+    <h2>Reduced mode checklist</h2>
+    <p>If owners or page data look incomplete:</p>
+    <ol class="install-steps">
+      <li>Open the dashboard — it lists exactly which scopes or products are unreadable.</li>
+      <li>Ask your organization admin to check the Teamwork Graph permissions under <strong>Connected apps → Shortfall → Permissions</strong>.</li>
+      <li>Wait about a minute after scope changes, then run <strong>Sync now</strong>.</li>
+    </ol>
+
+    <p style="margin-top:32px"><a class="btn btn--ghost" href="/">Back to home</a></p>
+  </div>
+</section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p class="fine-print">Shortfall is an independent app and is not affiliated with or endorsed by Atlassian or the FDA. openFDA data is unvalidated: do not rely on it to make decisions regarding medical care.</p>
+  </div>
+</footer>
+<script src="/assets/js/main.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,482 @@
+{
+  "meta": {
+    "disclaimer": "Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.",
+    "terms": "https://open.fda.gov/terms/",
+    "license": "https://open.fda.gov/license/",
+    "last_updated": "2026-11-13",
+    "results": {
+      "skip": 0,
+      "limit": 5,
+      "total": 374
+    }
+  },
+  "results": [
+    {
+      "update_type": "Reverified",
+      "initial_posting_date": "03/23/2018",
+      "package_ndc": "70069-062-25",
+      "generic_name": "Ropivacaine Hydrochloride Injection",
+      "contact_info": "732-554-1019",
+      "availability": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA207636"
+        ],
+        "brand_name": [
+          "ROPIVACAINE HYDROCHLORIDE"
+        ],
+        "generic_name": [
+          "ROPIVACAINE HYDROCHLORIDE"
+        ],
+        "manufacturer_name": [
+          "Somerset Therapeutics, LLC"
+        ],
+        "product_ndc": [
+          "70069-062",
+          "70069-061",
+          "70069-063",
+          "70069-064",
+          "70069-065",
+          "70069-066",
+          "70069-067"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "EPIDURAL",
+          "INFILTRATION",
+          "PERINEURAL"
+        ],
+        "substance_name": [
+          "ROPIVACAINE HYDROCHLORIDE"
+        ],
+        "rxcui": [
+          "905189",
+          "1734084",
+          "1734090",
+          "1734203",
+          "1734207",
+          "1734475",
+          "1734483"
+        ],
+        "spl_id": [
+          "79b226f0-c08a-4f84-bf2b-ae5c60e01d67"
+        ],
+        "spl_set_id": [
+          "ffeadbbf-4ca6-4ed8-94c1-6e0adf7fbe64"
+        ],
+        "package_ndc": [
+          "70069-061-01",
+          "70069-061-25",
+          "70069-061-10",
+          "70069-062-01",
+          "70069-062-25",
+          "70069-062-10",
+          "70069-063-01",
+          "70069-063-25",
+          "70069-064-01",
+          "70069-064-10",
+          "70069-064-25",
+          "70069-065-01",
+          "70069-065-25",
+          "70069-066-01",
+          "70069-066-25",
+          "70069-066-10",
+          "70069-067-01",
+          "70069-067-25",
+          "70069-067-10"
+        ],
+        "unii": [
+          "V910P86109"
+        ]
+      },
+      "update_date": "10/27/2026",
+      "therapeutic_category": [
+        "Anesthesia"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Ropivacaine Hydrochloride, Injection, 2 mg/1 mL (NDC 70069-062-25)",
+      "company_name": "Somerset Therapeutics, LLC",
+      "status": "Current"
+    },
+    {
+      "update_type": "Reverified",
+      "initial_posting_date": "02/20/2018",
+      "package_ndc": "63323-462-17",
+      "generic_name": "Bupivacaine Hydrochloride, Epinephrine Bitartrate Injection",
+      "contact_info": "888-386-1300",
+      "availability": "Available",
+      "related_info": "Check wholesalers for inventory",
+      "openfda": {
+        "application_number": [
+          "NDA018304"
+        ],
+        "brand_name": [
+          "SENSORCAINE MPF"
+        ],
+        "generic_name": [
+          "BUPIVACAINE HYDROCHLORIDE AND EPINEPHRINE BITARTRATE"
+        ],
+        "manufacturer_name": [
+          "Fresenius Kabi USA, LLC"
+        ],
+        "product_ndc": [
+          "63323-462",
+          "63323-464",
+          "63323-466",
+          "63323-465",
+          "63323-467",
+          "63323-460"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "EPIDURAL",
+          "INFILTRATION",
+          "INTRACAUDAL",
+          "PERINEURAL"
+        ],
+        "substance_name": [
+          "BUPIVACAINE HYDROCHLORIDE",
+          "EPINEPHRINE BITARTRATE"
+        ],
+        "rxcui": [
+          "1672917",
+          "1672919",
+          "1673296",
+          "1673298",
+          "1724880",
+          "1724881",
+          "1724884",
+          "1724885",
+          "1725078",
+          "1725082",
+          "1725175",
+          "1725177",
+          "1012391",
+          "1012396",
+          "1012404",
+          "1012421",
+          "1012455",
+          "1012457"
+        ],
+        "spl_id": [
+          "13a48007-3784-46f2-bd4d-da1004186b81",
+          "2b1a1f80-cb29-4ac1-9e72-20225ed45715"
+        ],
+        "spl_set_id": [
+          "dcf3c0ad-9eb8-4ee7-96df-d0db7ff23175",
+          "eb6d8fee-def4-4c96-9972-695e8cea8ea8"
+        ],
+        "package_ndc": [
+          "63323-462-03",
+          "63323-462-38",
+          "63323-464-09",
+          "63323-464-39",
+          "63323-466-09",
+          "63323-466-39",
+          "63323-465-01",
+          "63323-465-57",
+          "63323-467-01",
+          "63323-467-57",
+          "63323-460-01",
+          "63323-460-37",
+          "63323-464-02",
+          "63323-464-37",
+          "63323-464-03",
+          "63323-464-31",
+          "63323-466-01",
+          "63323-466-37",
+          "63323-466-02",
+          "63323-466-31",
+          "63323-462-04",
+          "63323-462-17",
+          "63323-462-01",
+          "63323-462-37",
+          "63323-462-02",
+          "63323-462-31"
+        ],
+        "unii": [
+          "7TQO7W3VT8",
+          "30Q7KI53AK"
+        ]
+      },
+      "update_date": "11/03/2026",
+      "therapeutic_category": [
+        "Anesthesia"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Sensorcaine, Injection, 5 mg/1 mL; .005 mg/1 mL (NDC 63323-462-17)",
+      "company_name": "Fresenius Kabi USA, LLC",
+      "status": "Current"
+    },
+    {
+      "update_type": "Revised",
+      "initial_posting_date": "02/15/2023",
+      "package_ndc": "66794-229-41",
+      "generic_name": "Rocuronium Bromide Injection",
+      "contact_info": "800-414-1901",
+      "availability": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA210437"
+        ],
+        "brand_name": [
+          "ROCURONIUM"
+        ],
+        "generic_name": [
+          "ROCURONIUM"
+        ],
+        "manufacturer_name": [
+          "Piramal Critical Care Inc"
+        ],
+        "product_ndc": [
+          "66794-229",
+          "66794-228"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "INTRAVENOUS"
+        ],
+        "substance_name": [
+          "ROCURONIUM BROMIDE"
+        ],
+        "rxcui": [
+          "1234995"
+        ],
+        "spl_id": [
+          "3f9e12e4-d3c5-fba6-e063-6294a90a7fd6"
+        ],
+        "spl_set_id": [
+          "98255b70-51f9-8d16-e053-2995a90a8f97"
+        ],
+        "package_ndc": [
+          "66794-229-02",
+          "66794-229-41",
+          "66794-228-02",
+          "66794-228-41"
+        ],
+        "unii": [
+          "I65MW4OFHZ"
+        ]
+      },
+      "update_date": "11/10/2026",
+      "therapeutic_category": [
+        "Anesthesia"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Rocuronium Bromide, Injection, 100 mg/10 mL (NDC 66794-229-41)",
+      "company_name": "Piramal Critical Care Inc.",
+      "status": "Current"
+    },
+    {
+      "update_type": "Reverified",
+      "initial_posting_date": "02/15/2023",
+      "package_ndc": "25021-687-05",
+      "generic_name": "Rocuronium Bromide Injection",
+      "contact_info": "866-625-1618",
+      "availability": "Available",
+      "openfda": {
+        "application_number": [
+          "ANDA205656"
+        ],
+        "brand_name": [
+          "ROCURONIUM BROMIDE"
+        ],
+        "generic_name": [
+          "ROCURONIUM BROMIDE"
+        ],
+        "manufacturer_name": [
+          "Sagent Pharmaceuticals"
+        ],
+        "product_ndc": [
+          "25021-687"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "INTRAVENOUS"
+        ],
+        "substance_name": [
+          "ROCURONIUM BROMIDE"
+        ],
+        "rxcui": [
+          "1234995"
+        ],
+        "spl_id": [
+          "46df7a65-7a07-4cf2-9c3d-b0efece06f8b"
+        ],
+        "spl_set_id": [
+          "01825411-be08-4402-b101-cb546291c972"
+        ],
+        "package_ndc": [
+          "25021-687-05",
+          "25021-687-10"
+        ],
+        "unii": [
+          "I65MW4OFHZ"
+        ]
+      },
+      "update_date": "11/06/2026",
+      "therapeutic_category": [
+        "Anesthesia"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Rocuronium Bromide, Injection, 10 mg/1 mL (NDC 25021-687-05)",
+      "company_name": "Sagent Pharmaceuticals",
+      "status": "Current"
+    },
+    {
+      "update_type": "Reverified",
+      "initial_posting_date": "03/23/2018",
+      "package_ndc": "63323-286-63",
+      "generic_name": "Ropivacaine Hydrochloride Injection",
+      "contact_info": "888-386-1300",
+      "availability": "Available",
+      "openfda": {
+        "application_number": [
+          "NDA020533"
+        ],
+        "brand_name": [
+          "NAROPIN"
+        ],
+        "generic_name": [
+          "ROPIVACAINE HYDROCHLORIDE"
+        ],
+        "manufacturer_name": [
+          "Fresenius Kabi USA, LLC"
+        ],
+        "product_ndc": [
+          "63323-286",
+          "63323-285",
+          "63323-287",
+          "63323-288"
+        ],
+        "product_type": [
+          "HUMAN PRESCRIPTION DRUG"
+        ],
+        "route": [
+          "EPIDURAL",
+          "INFILTRATION",
+          "PERINEURAL"
+        ],
+        "substance_name": [
+          "ROPIVACAINE HYDROCHLORIDE"
+        ],
+        "rxcui": [
+          "1734203",
+          "1734204",
+          "1734207",
+          "1734208",
+          "1734347",
+          "1734348",
+          "1734355",
+          "1734356",
+          "1734475",
+          "1734476",
+          "1734479",
+          "1734480",
+          "1734481",
+          "1734482",
+          "1734483",
+          "1734484",
+          "905189",
+          "905191",
+          "1734084",
+          "1734086",
+          "1734090",
+          "1734091"
+        ],
+        "spl_id": [
+          "324532ac-4e54-4659-a1a2-9ade22a1ed3f",
+          "cb6583ff-cde4-4280-aa5b-0bea2b844792",
+          "cdcd6c58-85cf-4d7e-9d97-b7c282a4f6b9",
+          "73218c89-8925-468c-84bf-9960b4b3dc3c"
+        ],
+        "spl_set_id": [
+          "dff4a1e4-4b2a-4a64-b6d8-ea470dee88f7",
+          "cb6583ff-cde4-4280-aa5b-0bea2b844792",
+          "23d2d448-a744-4877-9f2d-7e57c198da89",
+          "c6613708-c1f7-4f5c-91a3-ebbc1d7905c6"
+        ],
+        "package_ndc": [
+          "63323-286-41",
+          "63323-286-27",
+          "63323-286-43",
+          "63323-286-38",
+          "63323-285-41",
+          "63323-285-28",
+          "63323-285-53",
+          "63323-285-68",
+          "63323-285-59",
+          "63323-285-73",
+          "63323-286-51",
+          "63323-286-55",
+          "63323-286-01",
+          "63323-286-20",
+          "63323-286-05",
+          "63323-286-23",
+          "63323-286-09",
+          "63323-286-31",
+          "63323-286-11",
+          "63323-286-35",
+          "63323-286-03",
+          "63323-286-00",
+          "63323-286-33",
+          "63323-286-63",
+          "63323-286-30",
+          "63323-287-01",
+          "63323-287-20",
+          "63323-287-03",
+          "63323-287-21",
+          "63323-288-01",
+          "63323-288-10",
+          "63323-288-06",
+          "63323-288-20",
+          "63323-288-03",
+          "63323-288-11",
+          "63323-288-07",
+          "63323-288-21",
+          "63323-285-01",
+          "63323-285-10",
+          "63323-285-06",
+          "63323-285-20",
+          "63323-285-03",
+          "63323-285-13",
+          "63323-285-07",
+          "63323-285-23",
+          "63323-285-57",
+          "63323-285-64",
+          "63323-285-51",
+          "63323-285-65",
+          "63323-285-02",
+          "63323-285-61",
+          "63323-285-04",
+          "63323-285-63",
+          "63323-285-55",
+          "63323-285-67",
+          "63323-288-23",
+          "63323-288-29",
+          "63323-286-93",
+          "63323-286-95"
+        ],
+        "unii": [
+          "V910P86109"
+        ]
+      },
+      "update_date": "11/03/2026",
+      "therapeutic_category": [
+        "Anesthesia"
+      ],
+      "dosage_form": "Injection",
+      "presentation": "Naropin, Injection, 5 mg/1 mL (NDC 63323-286-63)",
+      "company_name": "Fresenius Kabi USA, LLC",
+      "status": "Current"
+    }
+  ]
+}
