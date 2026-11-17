@@ -6196,6 +6196,18 @@ Please see https://iframe-resizer.com/upgrade for more details.
   });
   $("btn-sample").addEventListener("click", () => runAction("btn-sample", "Load sample hospital"));
   $("btn-remove").addEventListener("click", () => runAction("btn-remove", "Remove sample hospital"));
+  $("btn-enrich").addEventListener("click", async () => {
+    $("btn-enrich").disabled = true;
+    try {
+      const r = await (0, import_bridge.invoke)("enrichImpact");
+      $("action-out").textContent = "Owner/team enrichment: " + JSON.stringify(r);
+    } catch (e) {
+      $("action-out").textContent = "Enrichment failed: " + String(e?.message ?? e);
+    } finally {
+      $("btn-enrich").disabled = false;
+      refresh();
+    }
+  });
   refresh().then(pollProgress).catch((e) => {
     $("status").textContent = "Failed to load dashboard: " + String(e?.message ?? e);
   });

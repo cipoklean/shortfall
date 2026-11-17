@@ -53,3 +53,26 @@ Confluence both present.
   pages already approve.
 - Shows the openFDA disclaimer wherever FDA data appears.
 - Creates nothing automatically unless your admin enabled it.
+
+## Verified on the reference demo site
+
+All of the following ran against live data on `one-atlas-ojjg.atlassian.net`
+(2026-11-17), not fixtures:
+
+- Sync queued as an async job fetched 1,580 FDA records
+  (`meta.last_updated` 2026-11-13) and matched 305 presentations against a
+  12-item formulary; re-running produced zero duplicates.
+- The sample hospital loader created space `SHOSP` with six fictional
+  protocol pages and a 12-item formulary via the normal Confluence v2 APIs.
+- Impact mapping found 72 affected pages/work items via CQL.
+- Response creation produced Jira work item `PROC-126`; the byline notice
+  on "Rapid sequence intubation order set" links to it.
+
+## Reduced mode
+
+- Teamwork Graph calls run only in a real user context (Forge cannot
+  impersonate for the graph API). Owner/team enrichment therefore runs when
+  a user clicks **Enrich owners** on the dashboard rather than in the
+  scheduled job; missing graph scopes are listed under "Reduced mode" on
+  the dashboard instead of failing.
+- The openFDA disclaimer appears wherever FDA data is shown.
