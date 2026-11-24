@@ -38,6 +38,7 @@
   --ink-soft: #55534a;
   --line: #d8d3bf;
   --amber: #d9820b;
+  --amber-text: #8f4f00;
   --amber-ink: #1c1a15;
   --red: #b3261e;
   --teal: #0e7a66;
@@ -74,7 +75,7 @@ h3 { font-size: 1.15rem; font-weight: 600; }
 
 p { margin: 0 0 1em; }
 a { color: var(--ink); text-underline-offset: 3px; }
-a:hover { color: var(--amber); }
+a:hover { color: var(--amber-text); }
 a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
   outline: 3px solid var(--amber);
   outline-offset: 2px;
@@ -243,7 +244,7 @@ section { padding: 64px 0; }
 .step .shot svg { display: block; width: 100%; height: auto; }
 .step-num {
   font-family: var(--font-head); font-weight: 700; font-size: 2rem;
-  color: var(--amber); line-height: 1;
+  color: var(--amber-text); line-height: 1;
 }
 .step h3 { margin: 6px 0 8px; }
 .step p { font-size: 0.85rem; margin: 0; max-width: 46em; }
@@ -293,7 +294,7 @@ section { padding: 64px 0; }
   content: counter(step, decimal-leading-zero);
   position: absolute; left: 0; top: 14px;
   font-family: var(--font-head); font-weight: 700; font-size: 1.4rem;
-  color: var(--amber);
+  color: var(--amber-text);
 }
 .install-steps code {
   background: var(--paper-dark); border: 1px solid var(--line);

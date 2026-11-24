@@ -13,11 +13,55 @@ const SALT_WORDS = new Set([
   'lactobionate', 'pamoate', 'hydrobromide', 'disodium', 'monosodium',
 ]);
 
-/** Normalize a package NDC to its 11-digit digit-only form. */
+/** Dosage-form and route words stripped by `baseIngredientName`. */
+const DOSAGE_FORM_WORDS = new Set([
+  'injection', 'injections', 'injectable',
+  'tablet', 'tablets', 'tab', 'tabs',
+  'capsule', 'capsules', 'cap', 'caps',
+  'solution', 'solutions',
+  'suspension', 'suspensions',
+  'powder', 'powders',
+  'concentrate', 'concentrates',
+  'emulsion', 'emulsions',
+  'syrup', 'elixir', 'lozenge', 'lozenges',
+  'cream', 'ointment', 'gel', 'jelly', 'lotion', 'foam', 'paste',
+  'spray', 'patch', 'suppository', 'suppositories', 'drops', 'enema',
+  'oral', 'topical', 'ophthalmic', 'otic', 'nasal', 'inhalation',
+  'intravenous', 'intramuscular', 'subcutaneous', 'rectal', 'vaginal',
+  'extended', 'delayed', 'immediate', 'sustained', 'controlled', 'release',
+  'chewable', 'effervescent', 'lyophilized', 'reconstitution', 'for', 'sterile',
+  'premix', 'premixed', 'infusion', 'irrigant', 'irrigation',
+]);
+
+/**
+ * Normalize a package NDC to its HIPAA 11-digit (5-4-2) digit-only form.
+ * Hyphenated FDA 10-digit formats (4-4-2, 5-3-2, 5-4-1) are zero-padded into
+ * the proper segment; 5-4-2 is concatenated directly; unhyphenated inputs
+ * fall back to stripping non-digits.
+ */
 export function normalizeNdc(ndc: string | undefined): string | null {
   if (!ndc) return null;
-  const digits = ndc.replace(/\D/g, '');
+  const trimmed = ndc.trim();
+  if (!trimmed) return null;
+  const parts = /^(\d+)-(\d+)-(\d+)$/.exec(trimmed);
+  if (parts) {
+    const [, a, b, c] = parts;
+    if (a.length === 4 && b.length === 4 && c.length === 2) return `0${a}${b}${c}`;
+    if (a.length === 5 && b.length === 3 && c.length === 2) return `${a}0${b}${c}`;
+    if (a.length === 5 && b.length === 4 && c.length === 1) return `${a}${b}0${c}`;
+    if (a.length === 5 && b.length === 4 && c.length === 2) return `${a}${b}${c}`;
+  }
+  const digits = trimmed.replace(/\D/g, '');
   return digits.length === 0 ? null : digits;
+}
+
+/** Source URL for an FDA shortage record (openFDA NDC search, or FDA portal). */
+export function fdaSourceUrl(packageNdc?: string | null): string {
+  const trimmed = packageNdc?.trim();
+  if (trimmed) {
+    return `https://api.fda.gov/drug/shortages.json?search=package_ndc:%22${encodeURIComponent(trimmed)}%22`;
+  }
+  return 'https://dps.fda.gov/drugshortages';
 }
 
 /** Lowercase, collapse whitespace, strip punctuation. */
@@ -35,8 +79,54 @@ export function stripSalts(normalizedName: string): string {
   return words.join(' ').trim();
 }
 
+/**
+ * Derive a clean base ingredient key from an FDA generic name by stripping
+ * diluent phrases ("in dextrose", "in sodium chloride", "in water"), dosage
+ * form words, and salt suffixes.
+ */
+export function baseIngredientName(genericName: string): string {
+  const withoutDiluent = genericName
+    .toLowerCase()
+    .replace(
+      /\bin\s+(?:\d+(?:\.\d+)?\s*%?\s+)?(?:dextrose|sodium\s+chloride|water(?:\s+for\s+injection)?|lactated\s+ringer\S*|ringer\S*)\b/g,
+      ' ',
+    );
+  const normalized = normalizeDrugName(withoutDiluent);
+  if (!normalized) return '';
+  const withoutForms = normalized
+    .split(' ')
+    .filter((w) => w && !DOSAGE_FORM_WORDS.has(w))
+    .join(' ')
+    .trim();
+  const withoutSalts = stripSalts(withoutForms);
+  return withoutSalts || withoutForms || normalizeDrugName(genericName);
+}
+
 export function normalizeDosageForm(form: string | undefined): string {
   return normalizeDrugName(form ?? '');
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Whole-word boundary check that `haystackBase` contains `needleBase`.
+ * Prevents substring false positives (e.g. "norepinephrine" matching
+ * "epinephrine", "hydromorphone" matching "morphine") and avoids reversing
+ * specificity ("insulin" matching "insulin glargine").
+ */
+export function matchesIngredientToken(haystackBase: string, needleBase: string): boolean {
+  const haystack = haystackBase.trim();
+  const needle = needleBase.trim();
+  if (needle.length <= 2 || haystack.length <= 2) return false;
+  const pattern = new RegExp(`(?:^|\\s)${escapeRegex(needle)}(?:$|\\s)`);
+  return pattern.test(haystack);
+}
+
+function normalizeIngredientKey(name: string): string {
+  const norm = normalizeDrugName(name);
+  return stripSalts(norm) || norm;
 }
 
 /** Stable key for a shortage record: its package NDC when present. */
@@ -99,9 +189,11 @@ export function matchShortages(
 
   const itemNdcIndex = new Map<string, FormularyItem[]>();
   for (const item of formulary) {
-    for (const ndc of item.packageNdcs) {
+    for (const rawNdc of item.packageNdcs) {
+      const ndc = normalizeNdc(rawNdc);
+      if (!ndc) continue;
       const list = itemNdcIndex.get(ndc) ?? [];
-      list.push(item);
+      if (!list.includes(item)) list.push(item);
       itemNdcIndex.set(ndc, list);
     }
   }
@@ -131,44 +223,87 @@ export function matchShortages(
     if (ndcMatched) continue;
 
     // 2. RxNorm ingredient + dosage form.
+    // Combination formulary items (multiple ingredients) must match ALL of
+    // their ingredients against the record; single-ingredient items match any
+    // record containing that ingredient.
     const ingredients = recordIngredients(record, ingredientIndex);
     let ingredientMatched = false;
-    for (const item of formulary) {
-      const hit = ingredients.find(
-        (ing) =>
-          item.ingredientRxcuis.includes(ing.rxcui) ||
-          item.ingredientNames.includes(stripSalts(ing.name)),
+    if (ingredients.length > 0) {
+      const recByRxcui = new Map(ingredients.map((ing) => [ing.rxcui, ing]));
+      const recByBaseName = new Map(
+        ingredients.map((ing) => [normalizeIngredientKey(ing.name), ing]),
       );
-      if (hit && dosageFormCompatible(record, item)) {
-        push(
-          item,
-          'ingredient_rxcui',
-          `RxNorm ingredient ${hit.name} (${hit.rxcui}) matches formulary item "${item.displayName}"` +
-            (record.dosage_form ? `, dosage form ${record.dosage_form}` : ''),
-        );
-        ingredientMatched = true;
+
+      for (const item of formulary) {
+        if (!dosageFormCompatible(record, item)) continue;
+        const itemRxcuis = [...new Set(item.ingredientRxcuis.filter(Boolean))];
+        const itemNames = [
+          ...new Set(item.ingredientNames.map(normalizeIngredientKey).filter(Boolean)),
+        ];
+        if (itemRxcuis.length === 0 && itemNames.length === 0) continue;
+
+        let matchedRefs: { rxcui: string; name: string }[] | null = null;
+        if (
+          itemRxcuis.length > 0 &&
+          itemRxcuis.length >= itemNames.length &&
+          itemRxcuis.every((c) => recByRxcui.has(c))
+        ) {
+          matchedRefs = itemRxcuis.map((c) => recByRxcui.get(c)!);
+        } else if (
+          itemNames.length > 0 &&
+          itemNames.length >= itemRxcuis.length &&
+          itemNames.every((n) => recByBaseName.has(n))
+        ) {
+          matchedRefs = itemNames.map((n) => recByBaseName.get(n)!);
+        }
+
+        if (matchedRefs && matchedRefs.length > 0) {
+          const desc =
+            matchedRefs.length === 1
+              ? `RxNorm ingredient ${matchedRefs[0].name} (${matchedRefs[0].rxcui}) matches`
+              : `RxNorm ingredients ${matchedRefs.map((h) => `${h.name} (${h.rxcui})`).join(' + ')} match`;
+          push(
+            item,
+            'ingredient_rxcui',
+            `${desc} formulary item "${item.displayName}"` +
+              (record.dosage_form ? `, dosage form ${record.dosage_form}` : ''),
+          );
+          ingredientMatched = true;
+        }
       }
     }
     if (ingredientMatched) continue;
 
-    // 3. Name fallback (empty openfda, unmapped rxcuis). Salts stripped.
+    // 3. Name fallback (empty openfda, unmapped rxcuis). Salts stripped,
+    // whole-word boundaries, and combination items must match every ingredient.
+    const candidates = candidateNames(record).map((name) => ({
+      name,
+      base: normalizeIngredientKey(name),
+    }));
     for (const item of formulary) {
-      for (const name of candidateNames(record)) {
-        const base = stripSalts(name);
-        if (
-          base.length > 2 &&
-          item.ingredientNames.some(
-            (n) => base === n || base.includes(n) || n.includes(base),
-          ) &&
-          dosageFormCompatible(record, item)
-        ) {
-          push(
-            item,
-            'ingredient_name',
-            `name "${name}" matches formulary ingredient of "${item.displayName}"`,
-          );
+      const itemNames = [
+        ...new Set(item.ingredientNames.map(normalizeIngredientKey).filter(Boolean)),
+      ];
+      if (itemNames.length === 0) continue;
+      if (!dosageFormCompatible(record, item)) continue;
+
+      const matchedNames: string[] = [];
+      let allMatched = true;
+      for (const needle of itemNames) {
+        const hit = candidates.find((c) => matchesIngredientToken(c.base, needle));
+        if (!hit) {
+          allMatched = false;
           break;
         }
+        if (!matchedNames.includes(hit.name)) matchedNames.push(hit.name);
+      }
+
+      if (allMatched) {
+        push(
+          item,
+          'ingredient_name',
+          `name "${matchedNames.join(' / ')}" matches formulary ingredient of "${item.displayName}"`,
+        );
       }
     }
   }

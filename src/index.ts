@@ -7,6 +7,8 @@ import {
   actionGetResponseStatus,
   actionDraftClinicianMessage,
   actionCreateResponseTask,
+  actionGetReversalChecklist,
+  actionLogTemporaryChange,
 } from './actions';
 
 /** UI resolver definitions for the Custom UI resources. */
@@ -57,3 +59,5 @@ export const getPastResponses = actionGetPastResponses;
 export const getResponseStatus = actionGetResponseStatus;
 export const draftClinicianMessage = actionDraftClinicianMessage;
 export const createResponseTask = actionCreateResponseTask;
+export const getReversalChecklist = actionGetReversalChecklist;
+export const logTemporaryChange = actionLogTemporaryChange;

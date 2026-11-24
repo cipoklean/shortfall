@@ -1,16 +1,18 @@
-import { sql, runMigrations } from './storage/schema';
+import { timingSafeEqual } from 'node:crypto';
+import { query, runMigrations } from './storage/schema';
 import { enqueueSync } from './sync';
 import { loadSampleHospital, removeSampleHospital } from './sample';
-import { createResponsesForNewMatches } from './respond';
+import { createResponseForShortage, openReversalTasksForResolvedResponses } from './respond';
 import { saveSettings } from './settings';
+import { fdaSourceUrl } from './match';
 import { kvs } from '@forge/kvs';
 import api, { route } from '@forge/api';
 
 /**
- * Diagnostic webtriggers. The URLs are unauthenticated capability links, so
- * every call must carry `token` equal to the app's environmentId — a value
- * only the developer can see via `forge environments list`. Responses are
- * read-only aggregates (counts, keys, sync log); no patient or page content.
+ * Developer diagnostic webtriggers. Completely disabled (HTTP 404) unless
+ * `SHORTFALL_DIAG_TOKEN` is explicitly configured in the Forge environment
+ * variables, and even then requires a matching `?token=` query parameter.
+ * Responses contain operational aggregates only; no patient data.
  */
 
 interface WebRequest {
@@ -25,16 +27,6 @@ interface WebContext {
   cloudId?: string;
 }
 
-function authorized(req: WebRequest, ctx: WebContext): boolean {
-  const token = req.queryParameters?.token?.[0] ?? '';
-  const installContext = String((ctx as Record<string, unknown>)?.installContext ?? '');
-  const m = installContext.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-  const envId = ctx.environmentId ?? m?.[0] ?? '';
-  if (token.length > 0 && envId.length > 0 && token === envId) return true;
-  console.log(`auth failed; installContext=${installContext}`);
-  return false;
-}
-
 function json(statusCode: number, body: unknown) {
   return {
     statusCode,
@@ -43,18 +35,29 @@ function json(statusCode: number, body: unknown) {
   };
 }
 
-/** POST: drive actions — sync, sample-load, sample-remove. */
-export async function webSync(req: WebRequest, ctx: WebContext) {
-  if (!authorized(req, ctx)) {
-    console.log(`webSync unauthorized; context keys: ${Object.keys(ctx ?? {}).join(',')}`);
+function authError(req: WebRequest): ReturnType<typeof json> | null {
+  const expected = process.env.SHORTFALL_DIAG_TOKEN;
+  if (!expected) {
+    return json(404, { error: 'not found' });
+  }
+  const provided = req.queryParameters?.token?.[0] ?? '';
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length || !timingSafeEqual(expectedBuf, providedBuf)) {
     return json(403, { error: 'forbidden' });
   }
+  return null;
+}
+
+/** POST: drive developer diagnostic actions — sync, sample-load, sample-remove, settings, respond. */
+export async function webSync(req: WebRequest, ctx: WebContext) {
+  const denied = authError(req);
+  if (denied) return denied;
+
   await runMigrations();
-  const cloudId = String((ctx as Record<string, unknown>)?.installContext ?? '').match(/[0-9a-f-]{36}/i)?.[0];
+  const cloudId = String(ctx?.installContext ?? '').match(/[0-9a-f-]{36}/i)?.[0];
   if (cloudId) await kvs.set('cloudId', cloudId);
-  const principal = (ctx as Record<string, unknown>)?.principal as { accountId?: string } | undefined;
-  console.log(`webSync principal=${JSON.stringify(principal)}`);
-  if (principal?.accountId) await kvs.set('graphUserId', principal.accountId);
+
   const action = req.queryParameters?.action?.[0] ?? 'sync';
   switch (action) {
     case 'sync':
@@ -66,58 +69,74 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
     case 'settings': {
       const patch: Record<string, unknown> = {};
       if (req.queryParameters?.auto?.[0] === '1') patch.autoCreateResponses = true;
+      if (req.queryParameters?.auto?.[0] === '0') patch.autoCreateResponses = false;
       if (req.queryParameters?.project?.[0]) patch.responseProjectKey = req.queryParameters.project[0];
-      if (req.queryParameters?.spaces?.[0]) patch.clinicalSpaceKeys = req.queryParameters.spaces[0].split(',').filter(Boolean);
+      if (req.queryParameters?.spaces?.[0]) {
+        patch.clinicalSpaceKeys = req.queryParameters.spaces[0].split(',').filter(Boolean);
+      }
       if (req.queryParameters?.setup?.[0] === '1') patch.setupComplete = true;
       return json(200, await saveSettings(patch));
     }
     case 'projects': {
-      const res = await api.asApp().requestJira(route`/rest/api/3/project/search`, { headers: { Accept: 'application/json' } });
-      if (!res.ok) return json(res.status, { error: `projects HTTP ${res.status}`, body: (await res.text()).slice(0, 300) });
+      const res = await api.asApp().requestJira(route`/rest/api/3/project/search`, {
+        headers: { Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        return json(res.status, {
+          error: `projects HTTP ${res.status}`,
+          body: (await res.text()).slice(0, 300),
+        });
+      }
       const data = (await res.json()) as { values?: { key: string; name: string }[] };
       return json(200, (data.values ?? []).map((p) => ({ key: p.key, name: p.name })));
     }
     case 'respond': {
       const key = req.queryParameters?.key?.[0] ?? '';
       if (!key) return json(400, { error: 'missing key param' });
-      return json(200, await createResponsesForNewMatches([key]));
+      return json(200, await createResponseForShortage(key));
     }
-    case 'set-user': {
-      const user = req.queryParameters?.user?.[0] ?? '';
-      if (!user) return json(400, { error: 'missing user param' });
-      await kvs.set('graphUserId', user);
-      return json(200, { graphUserId: user });
-    }
+    case 'reversals':
+      return json(200, await openReversalTasksForResolvedResponses());
     default:
       return json(400, { error: `unknown action ${action}` });
   }
 }
 
-/** GET: evidence report — sync log, table counts, sample matches. */
-export async function webReport(req: WebRequest, ctx: WebContext) {
-  if (!authorized(req, ctx)) {
-    console.log(`webReport unauthorized; context keys: ${Object.keys(ctx ?? {}).join(',')}`);
-    return json(403, { error: 'forbidden' });
-  }
+/** GET: diagnostic evidence report — sync log, table counts, sample matches. */
+export async function webReport(req: WebRequest, _ctx: WebContext) {
+  const denied = authError(req);
+  if (denied) return denied;
+
   await runMigrations();
 
-  const count = async (table: string) =>
-    (await sql.executeRaw<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`)).rows?.[0]?.n ?? 0;
+  const countQuery = async (statement: string) =>
+    (await query<{ n: number }>(statement))[0]?.n ?? 0;
 
-  const syncRuns = (await sql.executeRaw<{
-    id: number; kind: string; state: string; started_at: string; finished_at: string; result: string;
-  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY id DESC LIMIT 10`)).rows ?? [];
+  const syncRuns = await query<{
+    id: number;
+    kind: string;
+    state: string;
+    started_at: string;
+    finished_at: string;
+    result: string;
+  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY id DESC LIMIT 10`);
 
-  const matches = (await sql.executeRaw<{
-    shortage_key: string; generic_name: string; status: string; package_ndc: string;
-    presentation: string; reason: string; display_name: string;
+  const matches = await query<{
+    shortage_key: string;
+    generic_name: string;
+    status: string;
+    package_ndc: string;
+    presentation: string;
+    reason: string;
+    display_name: string;
   }>(
     `SELECT s.shortage_key, s.generic_name, s.status, s.package_ndc, s.presentation, m.reason, f.display_name
      FROM \`match\` m
      JOIN shortage s ON s.shortage_key = m.shortage_key
      JOIN formulary_item f ON f.id = m.formulary_item_id
+     WHERE m.superseded = 0
      ORDER BY s.update_date DESC LIMIT 50`,
-  )).rows ?? [];
+  );
 
   const lastSync = (await kvs.get('lastSync')) ?? null;
 
@@ -125,19 +144,31 @@ export async function webReport(req: WebRequest, ctx: WebContext) {
   const { getPageNoticeData } = await import('./resolvers');
   const pageCheck = pageCheckId ? await getPageNoticeData(pageCheckId) : undefined;
 
-  const impactItems = (await sql.executeRaw<{
-    shortage_key: string; kind: string; ref_id: string; title: string; owner_name: string; team_name: string; found_via: string;
-  }>(`SELECT shortage_key, kind, ref_id, title, owner_name, team_name, found_via FROM impact_item LIMIT 100`)).rows ?? [];
+  const impactItems = await query<{
+    shortage_key: string;
+    kind: string;
+    ref_id: string;
+    title: string;
+    owner_name: string;
+    team_name: string;
+    found_via: string;
+    space_key: string;
+    hop: number;
+  }>(
+    `SELECT shortage_key, kind, ref_id, title, owner_name, team_name, found_via, space_key, hop
+     FROM impact_item LIMIT 100`,
+  );
 
   return json(200, {
     generatedAt: new Date().toISOString(),
     counts: {
-      shortage: await count('shortage'),
-      formulary_item: await count('formulary_item'),
-      match: await count('\`match\`'),
-      impact_item: await count('impact_item'),
-      response: await count('response'),
-      sync_run: await count('sync_run'),
+      shortage: await countQuery('SELECT COUNT(*) AS n FROM shortage'),
+      formulary_item: await countQuery('SELECT COUNT(*) AS n FROM formulary_item'),
+      match: await countQuery('SELECT COUNT(*) AS n FROM `match`'),
+      impact_item: await countQuery('SELECT COUNT(*) AS n FROM impact_item'),
+      response: await countQuery('SELECT COUNT(*) AS n FROM response'),
+      temporary_change: await countQuery('SELECT COUNT(*) AS n FROM temporary_change'),
+      sync_run: await countQuery('SELECT COUNT(*) AS n FROM sync_run'),
     },
     syncRuns,
     lastSync,
@@ -151,7 +182,7 @@ export async function webReport(req: WebRequest, ctx: WebContext) {
       fdaStatus: m.status,
       matchedTo: m.display_name,
       matchReason: m.reason,
-      source: `https://api.fda.gov/drug/shortages.json?search=package_ndc:%22${m.package_ndc}%22`,
+      source: fdaSourceUrl(m.package_ndc),
     })),
   });
 }

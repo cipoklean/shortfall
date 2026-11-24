@@ -3,78 +3,1386 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shortfall</title>
+  <title>Shortfall — Drug Shortage Response</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; color: #1d2125; background: #fff; }
-    h1 { font-size: 22px; margin: 0 0 4px; }
-    h2 { font-size: 15px; margin: 28px 0 10px; border-bottom: 1px solid #dcdfe4; padding-bottom: 6px; }
-    .sub { color: #44546f; margin: 0 0 20px; max-width: 720px; }
-    .kpis { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
-    .kpi { border: 1px solid #dcdfe4; border-radius: 4px; padding: 12px 18px; min-width: 120px; }
-    .kpi .n { font-size: 26px; font-weight: 700; display: block; }
-    .kpi .l { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #44546f; }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
-    button { border: 2px solid #1d2125; border-radius: 4px; padding: 8px 16px; font: inherit; font-weight: 600; background: #e56910; color: #1d2125; cursor: pointer; }
-    button.secondary { background: #fff; }
-    button:disabled { opacity: 0.5; cursor: default; }
-    #action-out { font-size: 12px; color: #44546f; margin-top: 6px; word-break: break-all; }
-    #progress { border: 1px solid #e56910; background: #fff4e5; padding: 10px 14px; border-radius: 4px; margin: 10px 0; font-size: 13px; }
-    #reduced { border: 1px solid #b3261e; background: #fff0ef; padding: 10px 14px; border-radius: 4px; margin: 10px 0; font-size: 13px; }
-    #last-sync { font-size: 13px; color: #44546f; margin: 8px 0 18px; }
-    table { border-collapse: collapse; width: 100%; font-size: 13px; }
-    th, td { border: 1px solid #dcdfe4; padding: 6px 9px; text-align: left; vertical-align: top; }
-    th { background: #f7f8f9; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-    .st { display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 4px; border: 1px solid #1d2125; }
-    .st-amber { background: #e56910; }
-    .st-red { background: #b3261e; color: #fff; }
-    .st-teal { background: #0e7a66; color: #fff; }
-    .st-plain { background: #f7f8f9; }
-    .disclaimer { margin-top: 28px; padding-top: 12px; border-top: 1px dashed #8590a2; font-size: 11px; color: #44546f; max-width: 760px; }
-    code { font-size: 11px; }
+    :root {
+      --sf-bg: var(--ds-surface, #f8f7f3);
+      --sf-raised: var(--ds-surface-raised, #ffffff);
+      --sf-sunken: var(--ds-surface-sunken, #efede5);
+      --sf-overlay: var(--ds-surface-overlay, #ffffff);
+      --sf-hover: var(--ds-background-neutral-subtle-hovered, rgba(28, 26, 21, 0.045));
+      --sf-neutral: var(--ds-background-neutral, rgba(28, 26, 21, 0.06));
+      --sf-input: var(--ds-background-input, var(--ds-surface, #ffffff));
+
+      --sf-text: var(--ds-text, #1c1a15);
+      --sf-text-subtle: var(--ds-text-subtle, #55534a);
+      --sf-text-subtlest: var(--ds-text-subtlest, #6b685e);
+      --sf-link: var(--ds-link, #0c66e4);
+
+      --sf-border: var(--ds-border, #d8d3bf);
+      --sf-border-bold: var(--ds-border-bold, #85806f);
+      --sf-border-input: var(--ds-border-input, #b8b29e);
+      --sf-focus: var(--ds-border-focused, #d9820b);
+
+      --sf-amber: #d9820b;
+      --sf-amber-ink: #1c1a15;
+      --sf-amber-tint: rgba(217, 130, 11, 0.13);
+      --sf-red: #b3261e;
+      --sf-red-ink: #ffffff;
+      --sf-red-tint: rgba(179, 38, 30, 0.12);
+      --sf-teal: #0e7a66;
+      --sf-teal-ink: #ffffff;
+      --sf-teal-text: #0b6655;
+      --sf-teal-tint: rgba(14, 122, 102, 0.12);
+
+      --sf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+      --sf-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    html[data-color-mode="dark"] {
+      --sf-amber-tint: rgba(217, 130, 11, 0.18);
+      --sf-red-tint: rgba(179, 38, 30, 0.22);
+      --sf-teal-text: #38c2a5;
+      --sf-teal-tint: rgba(14, 122, 102, 0.22);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--sf-bg);
+      color: var(--sf-text);
+      font-family: var(--sf-sans);
+      font-size: 13.5px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a {
+      color: var(--sf-link);
+      text-decoration: none;
+    }
+    a:hover { text-decoration: underline; }
+
+    :focus-visible {
+      outline: 2px solid var(--sf-focus);
+      outline-offset: 2px;
+    }
+
+    [hidden] { display: none !important; }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .mono {
+      font-family: var(--sf-mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .app {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 20px 24px 36px;
+    }
+
+    /* ---------- Header ---------- */
+    .topbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px 20px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid var(--sf-border);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      color: var(--sf-text);
+    }
+
+    .brand-copy h1 {
+      margin: 0;
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: 1.15;
+    }
+
+    .brand-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 3px;
+      font-size: 12px;
+      color: var(--sf-text-subtle);
+    }
+
+    .meta-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-raised);
+      color: var(--sf-text-subtle);
+    }
+
+    .meta-pill strong {
+      color: var(--sf-text);
+      font-weight: 600;
+    }
+
+    .header-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* ---------- Buttons ---------- */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 13px;
+      border-radius: 4px;
+      border: 1.5px solid var(--sf-border-bold);
+      background: var(--sf-raised);
+      color: var(--sf-text);
+      font-family: var(--sf-sans);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.2;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--sf-hover);
+      border-color: var(--sf-text);
+    }
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--sf-amber);
+      color: var(--sf-amber-ink);
+      border-color: #1c1a15;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #c27308;
+      border-color: #1c1a15;
+    }
+
+    .btn-attention {
+      background: var(--sf-red);
+      color: var(--sf-red-ink);
+      border-color: #7a1611;
+    }
+    .btn-attention:hover:not(:disabled) {
+      background: #991f18;
+      border-color: #7a1611;
+    }
+
+    .btn-teal {
+      background: var(--sf-teal);
+      color: var(--sf-teal-ink);
+      border-color: #095244;
+    }
+    .btn-teal:hover:not(:disabled) {
+      background: #0b6655;
+      border-color: #095244;
+    }
+
+    .btn-sm {
+      padding: 4px 9px;
+      font-size: 12px;
+      border-width: 1px;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      border-color: transparent;
+      color: var(--sf-text-subtle);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      background: var(--sf-hover);
+      border-color: var(--sf-border);
+      color: var(--sf-text);
+    }
+
+    /* ---------- Banners & Feedback ---------- */
+    .banner {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 4px;
+      border: 1.5px solid var(--sf-border);
+      background: var(--sf-raised);
+      font-size: 13px;
+    }
+
+    .banner-reduced {
+      border-color: var(--sf-red);
+      background: var(--sf-red-tint);
+    }
+    .banner-reduced ul {
+      margin: 5px 0 0;
+      padding-left: 18px;
+    }
+    .banner-reduced li {
+      margin: 2px 0;
+      font-family: var(--sf-mono);
+      font-size: 12px;
+    }
+
+    .banner-progress {
+      border-color: var(--sf-amber);
+      background: var(--sf-amber-tint);
+      align-items: center;
+    }
+
+    .banner-toast {
+      border-color: var(--sf-teal);
+      background: var(--sf-teal-tint);
+      align-items: center;
+    }
+    .banner-toast.is-error {
+      border-color: var(--sf-red);
+      background: var(--sf-red-tint);
+    }
+
+    .pulse-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--sf-amber);
+      margin-right: 8px;
+      vertical-align: middle;
+      animation: sf-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes sf-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* ---------- KPI Dispensary Strip ---------- */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    @media (max-width: 1040px) {
+      .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 600px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    .kpi-card {
+      background: var(--sf-raised);
+      border: 1px solid var(--sf-border);
+      border-top: 3px solid var(--sf-border-bold);
+      border-radius: 4px;
+      padding: 11px 13px;
+      min-width: 0;
+    }
+
+    .kpi-card.kpi-amber { border-top-color: var(--sf-amber); }
+    .kpi-card.kpi-red { border-top-color: var(--sf-red); }
+    .kpi-card.kpi-teal { border-top-color: var(--sf-teal); }
+
+    .kpi-label {
+      display: block;
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--sf-text-subtle);
+    }
+
+    .kpi-val {
+      display: block;
+      margin-top: 4px;
+      font-family: var(--sf-mono);
+      font-size: 24px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+      color: var(--sf-text);
+    }
+
+    .kpi-sub {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      color: var(--sf-text-subtlest);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Exposure by space bar */
+    .space-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      padding: 7px 10px;
+      background: var(--sf-sunken);
+      border: 1px solid var(--sf-border);
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .space-strip-label {
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--sf-text-subtle);
+      margin-right: 4px;
+    }
+
+    .space-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 3px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-raised);
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      color: var(--sf-text);
+    }
+    .space-chip .count {
+      font-weight: 700;
+      color: var(--sf-amber);
+    }
+
+    /* ---------- Tabs ---------- */
+    .tabs {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      margin-top: 18px;
+      border-bottom: 1.5px solid var(--sf-border);
+    }
+
+    .tab-btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 9px 15px;
+      margin-bottom: -1.5px;
+      border: 1.5px solid transparent;
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      background: transparent;
+      color: var(--sf-text-subtle);
+      font-family: var(--sf-sans);
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn:hover {
+      color: var(--sf-text);
+      background: var(--sf-hover);
+    }
+    .tab-btn[aria-selected="true"] {
+      color: var(--sf-text);
+      background: var(--sf-raised);
+      border-color: var(--sf-border);
+      border-bottom: 2px solid var(--sf-raised);
+    }
+    .tab-btn[aria-selected="true"]::before {
+      content: "";
+      position: absolute;
+      top: -1.5px;
+      left: -1.5px;
+      right: -1.5px;
+      height: 3px;
+      background: var(--sf-amber);
+      border-radius: 4px 4px 0 0;
+    }
+
+    .tab-count {
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: var(--sf-neutral);
+      color: var(--sf-text-subtle);
+    }
+
+    .setup-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--sf-amber);
+      display: inline-block;
+    }
+
+    .tab-panel {
+      background: var(--sf-raised);
+      border: 1px solid var(--sf-border);
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+      padding: 16px;
+    }
+
+    /* ---------- Auxiliary Warning Stickers & Chips ---------- */
+    .sticker {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1.5px solid #1c1a15;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
+
+    .sticker-current {
+      background: var(--sf-amber);
+      color: var(--sf-amber-ink);
+      border-color: #1c1a15;
+    }
+
+    .sticker-discontinued {
+      background: var(--sf-red);
+      color: var(--sf-red-ink);
+      border-color: #7a1611;
+    }
+
+    .sticker-resolved {
+      background: var(--sf-teal);
+      color: var(--sf-teal-ink);
+      border-color: #095244;
+    }
+
+    .sticker-plain {
+      background: var(--sf-sunken);
+      color: var(--sf-text);
+      border-color: var(--sf-border-bold);
+    }
+
+    .chip-graph {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1.5px solid var(--sf-teal);
+      background: var(--sf-teal-tint);
+      color: var(--sf-teal-text);
+      white-space: nowrap;
+    }
+
+    .chip-meta {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--sf-mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-sunken);
+      color: var(--sf-text-subtle);
+      white-space: nowrap;
+    }
+
+    .chip-issue {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1px solid var(--sf-border-bold);
+      background: var(--sf-sunken);
+      color: var(--sf-link);
+      white-space: nowrap;
+    }
+    .chip-issue:hover {
+      background: var(--sf-hover);
+      text-decoration: none;
+    }
+
+    /* ---------- Filter Bar ---------- */
+    .filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .filter-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .pill-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-sunken);
+      color: var(--sf-text-subtle);
+      font-family: var(--sf-sans);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .pill-btn:hover {
+      border-color: var(--sf-border-bold);
+      color: var(--sf-text);
+    }
+    .pill-btn[aria-pressed="true"] {
+      background: var(--sf-text);
+      color: var(--sf-raised);
+      border-color: var(--sf-text);
+    }
+    .pill-btn .pill-n {
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      opacity: 0.8;
+    }
+
+    .search-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1 1 260px;
+      justify-content: flex-end;
+    }
+
+    .search-input {
+      width: 100%;
+      max-width: 340px;
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1.5px solid var(--sf-border-input);
+      background: var(--sf-input);
+      color: var(--sf-text);
+      font-family: var(--sf-sans);
+      font-size: 13px;
+    }
+
+    .filter-summary {
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      color: var(--sf-text-subtle);
+      white-space: nowrap;
+    }
+
+    /* ---------- Ingredient Groups & NDC Presentation Tables ---------- */
+    .ingredient-groups {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .ing-group {
+      border: 1px solid var(--sf-border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--sf-raised);
+    }
+
+    .ing-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--sf-sunken);
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    .ing-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .ing-name {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: capitalize;
+    }
+
+    .table-scroll {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--sf-border);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    th {
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--sf-text-subtle);
+      background: var(--sf-bg);
+      white-space: nowrap;
+    }
+
+    tr.shortage-row {
+      cursor: pointer;
+      transition: background 90ms ease;
+    }
+    tr.shortage-row:hover {
+      background: var(--sf-hover);
+    }
+
+    .ndc-link {
+      font-family: var(--sf-mono);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .pres-title {
+      font-weight: 500;
+      color: var(--sf-text);
+    }
+    .pres-sub {
+      margin-top: 2px;
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      color: var(--sf-text-subtlest);
+    }
+
+    .match-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      align-items: flex-start;
+    }
+
+    .impact-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-sunken);
+      font-family: var(--sf-mono);
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+    .impact-pill.has-impact {
+      border-color: var(--sf-amber);
+      background: var(--sf-amber-tint);
+      color: var(--sf-text);
+    }
+
+    /* ---------- Empty State ---------- */
+    .empty-state {
+      text-align: center;
+      padding: 36px 20px;
+      color: var(--sf-text-subtle);
+    }
+    .empty-state svg {
+      width: 44px;
+      height: 44px;
+      margin-bottom: 10px;
+      color: var(--sf-text-subtle);
+    }
+    .empty-state h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      color: var(--sf-text);
+    }
+    .empty-state p {
+      margin: 0 auto 14px;
+      max-width: 460px;
+      font-size: 13px;
+    }
+
+    /* ---------- Setup & Formulary ---------- */
+    .setup-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .setup-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      border: 1px solid var(--sf-border);
+      border-radius: 4px;
+      background: var(--sf-bg);
+      padding: 16px;
+    }
+
+    .card h2 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .card-desc {
+      margin: 0 0 14px;
+      font-size: 12.5px;
+      color: var(--sf-text-subtle);
+    }
+
+    .field {
+      margin-bottom: 14px;
+    }
+
+    .field-label {
+      display: block;
+      margin-bottom: 5px;
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--sf-text-subtle);
+    }
+
+    .field-help {
+      margin-top: 4px;
+      font-size: 11.5px;
+      color: var(--sf-text-subtlest);
+    }
+
+    .input, select.input, textarea.input {
+      width: 100%;
+      padding: 7px 10px;
+      border-radius: 4px;
+      border: 1.5px solid var(--sf-border-input);
+      background: var(--sf-input);
+      color: var(--sf-text);
+      font-family: var(--sf-sans);
+      font-size: 13px;
+    }
+
+    textarea.input {
+      font-family: var(--sf-mono);
+      font-size: 12px;
+      line-height: 1.5;
+      min-height: 132px;
+      resize: vertical;
+    }
+
+    .space-checklist {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1.5px solid var(--sf-border-input);
+      background: var(--sf-input);
+    }
+
+    .check-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 4px 6px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12.5px;
+    }
+    .check-row:hover { background: var(--sf-hover); }
+    .check-row input { margin-top: 2px; flex: 0 0 auto; }
+
+    .consent-box {
+      padding: 10px 12px;
+      border-radius: 4px;
+      border: 1.5px solid var(--sf-border);
+      background: var(--sf-raised);
+    }
+    .consent-box label {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .consent-box strong {
+      display: block;
+      font-size: 13px;
+    }
+    .consent-box span {
+      display: block;
+      margin-top: 2px;
+      font-size: 12px;
+      color: var(--sf-text-subtle);
+    }
+
+    .upload-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .parse-preview {
+      margin-top: 8px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      border: 1px dashed var(--sf-border-bold);
+      background: var(--sf-raised);
+      font-family: var(--sf-mono);
+      font-size: 11.5px;
+      color: var(--sf-text-subtle);
+    }
+
+    .sample-box {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1.5px dashed var(--sf-border);
+    }
+    .sample-box h3 {
+      margin: 0 0 4px;
+      font-size: 13.5px;
+      font-weight: 700;
+    }
+    .sample-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    /* ---------- Sync Audit Table ---------- */
+    .audit-table-wrap {
+      border: 1px solid var(--sf-border);
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+
+    .result-code {
+      display: block;
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      color: var(--sf-text-subtle);
+      max-width: 440px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ---------- Slide-Over Detail Drawer ---------- */
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 17, 21, 0.45);
+      z-index: 90;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .drawer {
+      width: min(640px, 100vw);
+      height: 100%;
+      background: var(--sf-overlay);
+      border-left: 2px solid var(--sf-border-bold);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .drawer-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      background: var(--sf-sunken);
+      border-bottom: 1.5px solid var(--sf-border);
+    }
+
+    .drawer-head h2 {
+      margin: 6px 0 3px;
+      font-size: 17px;
+      line-height: 1.2;
+    }
+
+    .drawer-pres {
+      margin: 0;
+      font-size: 13px;
+      color: var(--sf-text-subtle);
+    }
+
+    .drawer-body {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 16px 18px 24px;
+    }
+
+    .drawer-section {
+      margin-bottom: 20px;
+    }
+    .drawer-section:last-child { margin-bottom: 0; }
+
+    .drawer-section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 0 0 10px;
+      padding-bottom: 5px;
+      border-bottom: 1px solid var(--sf-border);
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--sf-text-subtle);
+    }
+
+    .fact-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px 14px;
+      padding: 10px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-bg);
+    }
+    @media (max-width: 520px) {
+      .fact-grid { grid-template-columns: 1fr; }
+    }
+
+    .fact-item dt {
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--sf-text-subtlest);
+    }
+    .fact-item dd {
+      margin: 2px 0 0;
+      font-size: 13px;
+      color: var(--sf-text);
+      word-break: break-word;
+    }
+
+    .timeline {
+      list-style: none;
+      margin: 10px 0 0;
+      padding: 0 0 0 12px;
+      border-left: 2px solid var(--sf-border);
+    }
+    .timeline li {
+      position: relative;
+      padding: 4px 0 6px 10px;
+      font-size: 12.5px;
+    }
+    .timeline li::before {
+      content: "";
+      position: absolute;
+      left: -17px;
+      top: 9px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--sf-amber);
+      border: 1.5px solid var(--sf-overlay);
+    }
+
+    .impact-subhead {
+      margin: 10px 0 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--sf-text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .item-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .item-card {
+      padding: 9px 11px;
+      border-radius: 4px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-bg);
+    }
+    .item-card.is-graph {
+      border-left: 3px solid var(--sf-teal);
+    }
+
+    .item-card-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .item-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      font-size: 11.5px;
+      color: var(--sf-text-subtle);
+    }
+
+    .inline-form {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .inline-form input {
+      flex: 1 1 auto;
+    }
+
+    .drawer-foot {
+      padding: 10px 18px;
+      border-top: 1px solid var(--sf-border);
+      background: var(--sf-sunken);
+      font-size: 11px;
+      color: var(--sf-text-subtlest);
+    }
+
+    /* ---------- Persistent Disclaimer Footer ---------- */
+    .footer {
+      margin-top: 24px;
+      padding-top: 14px;
+      border-top: 1.5px dashed var(--sf-border-bold);
+      font-size: 11.5px;
+      color: var(--sf-text-subtlest);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .footer p { margin: 0; max-width: 860px; }
   </style>
 </head>
 <body>
-  <h1>Shortfall</h1>
-  <p class="sub">FDA drug shortages matched to this site's drug list — impact, owners, response and reversal, inside Jira and Confluence.</p>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+          <rect x="9" y="7" width="22" height="26" fill="none" stroke="#d9820b" stroke-width="2.6" stroke-dasharray="5 3.5"/>
+          <line x1="4" y1="36" x2="36" y2="36" stroke="currentColor" stroke-width="3"/>
+        </svg>
+        <div class="brand-copy">
+          <h1>Shortfall</h1>
+          <div class="brand-meta" id="header-sync-meta">
+            <span class="meta-pill">Loading sync status…</span>
+          </div>
+        </div>
+      </div>
 
-  <div id="status">Loading…</div>
+      <div class="header-actions">
+        <button type="button" class="btn btn-primary" id="btn-sync">Sync now</button>
+        <button type="button" class="btn" id="btn-enrich" title="Resolve protocol owners and 2nd-hop linked pages via Atlassian Teamwork Graph">Enrich owners &amp; links (Teamwork Graph)</button>
+        <button type="button" class="btn btn-attention" id="btn-reversals" hidden>Open reversal tasks</button>
+      </div>
+    </header>
 
-  <div class="kpis">
-    <div class="kpi"><span class="n" id="kpi-active">0</span><span class="l">matched shortages</span></div>
-    <div class="kpi"><span class="n" id="kpi-impact">0</span><span class="l">impact items</span></div>
-    <div class="kpi"><span class="n" id="kpi-formulary">0</span><span class="l">formulary items</span></div>
-    <div class="kpi"><span class="n" id="kpi-space">—</span><span class="l">sample space</span></div>
+    <div id="reduced-banner" class="banner banner-reduced" role="alert" hidden>
+      <div>
+        <strong>Reduced mode</strong> — some Atlassian capabilities are unavailable on this site:
+        <ul id="reduced-list"></ul>
+      </div>
+    </div>
+
+    <div id="progress-banner" class="banner banner-progress" role="status" aria-live="polite" hidden>
+      <div><span class="pulse-dot" aria-hidden="true"></span><strong>Sync in progress</strong> — <span id="progress-detail" class="mono">Starting…</span></div>
+    </div>
+
+    <div id="toast-banner" class="banner banner-toast" role="status" aria-live="polite" hidden>
+      <div id="toast-text"></div>
+      <button type="button" class="btn btn-sm btn-ghost" id="toast-close" aria-label="Dismiss notification">Dismiss</button>
+    </div>
+
+    <section class="kpi-grid" aria-label="Shortage overview metrics">
+      <div class="kpi-card kpi-amber">
+        <span class="kpi-label">Active Shortages</span>
+        <span class="kpi-val" id="kpi-active">—</span>
+        <span class="kpi-sub" id="kpi-active-sub">Current FDA matches</span>
+      </div>
+      <div class="kpi-card kpi-teal">
+        <span class="kpi-label">Affected Protocols</span>
+        <span class="kpi-val" id="kpi-impact">—</span>
+        <span class="kpi-sub" id="kpi-impact-sub">0 direct · 0 2nd-hop</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Formulary Items</span>
+        <span class="kpi-val" id="kpi-formulary">—</span>
+        <span class="kpi-sub" id="kpi-formulary-sub">Active hospital list</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Open Responses</span>
+        <span class="kpi-val" id="kpi-responses">—</span>
+        <span class="kpi-sub" id="kpi-responses-sub">0 temp changes open</span>
+      </div>
+      <div class="kpi-card" id="kpi-reversals-card">
+        <span class="kpi-label">Reversals Due</span>
+        <span class="kpi-val" id="kpi-reversals">—</span>
+        <span class="kpi-sub" id="kpi-reversals-sub">Resolved shortages</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Median Response</span>
+        <span class="kpi-val" id="kpi-median">—</span>
+        <span class="kpi-sub">Hours to open response</span>
+      </div>
+    </section>
+
+    <div id="space-strip" class="space-strip" hidden>
+      <span class="space-strip-label">Exposure by Space</span>
+      <div id="space-chips" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+      <button type="button" class="tab-btn" role="tab" id="tab-shortages" aria-selected="true" aria-controls="panel-shortages" tabindex="0">
+        Shortages <span class="tab-count" id="tab-shortages-count">0</span>
+      </button>
+      <button type="button" class="tab-btn" role="tab" id="tab-setup" aria-selected="false" aria-controls="panel-setup" tabindex="-1">
+        Setup &amp; Formulary <span class="setup-dot" id="setup-indicator" hidden aria-label="Setup needed"></span>
+      </button>
+      <button type="button" class="tab-btn" role="tab" id="tab-audit" aria-selected="false" aria-controls="panel-audit" tabindex="-1">
+        Sync Audit <span class="tab-count" id="tab-audit-count">0</span>
+      </button>
+    </nav>
+
+    <!-- Tab 1: Shortages -->
+    <section class="tab-panel" role="tabpanel" id="panel-shortages" aria-labelledby="tab-shortages">
+      <div class="filter-bar">
+        <div class="filter-pills" role="group" aria-label="Filter by FDA status">
+          <button type="button" class="pill-btn" data-status="All" aria-pressed="true">All <span class="pill-n" id="count-all">0</span></button>
+          <button type="button" class="pill-btn" data-status="Current" aria-pressed="false">Current <span class="pill-n" id="count-current">0</span></button>
+          <button type="button" class="pill-btn" data-status="To Be Discontinued" aria-pressed="false">To Be Discontinued <span class="pill-n" id="count-discontinued">0</span></button>
+          <button type="button" class="pill-btn" data-status="Resolved" aria-pressed="false">Resolved <span class="pill-n" id="count-resolved">0</span></button>
+        </div>
+        <div class="search-wrap">
+          <span class="filter-summary" id="filter-summary"></span>
+          <input type="search" id="search-input" class="search-input" placeholder="Search drug, NDC, presentation, or company…" aria-label="Search shortages by drug name, NDC, presentation, or company">
+        </div>
+      </div>
+
+      <div id="shortages-container" class="ingredient-groups">
+        <div class="empty-state">
+          <p>Loading matched shortages…</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Setup & Formulary -->
+    <section class="tab-panel" role="tabpanel" id="panel-setup" aria-labelledby="tab-setup" hidden>
+      <div class="setup-grid">
+        <div class="card">
+          <h2>Clinical Scope &amp; Response Governance</h2>
+          <p class="card-desc">Choose which Confluence spaces contain clinical protocols and where Jira shortage response items should be tracked.</p>
+
+          <form id="settings-form">
+            <div class="field">
+              <span class="field-label">Clinical Confluence Spaces</span>
+              <div id="spaces-checklist" class="space-checklist" role="group" aria-label="Clinical Confluence spaces">
+                <span class="field-help">Loading spaces…</span>
+              </div>
+              <div class="field-help">Shortfall searches selected spaces for affected protocols and order sets.</div>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="select-project">Jira Response Project</label>
+              <select id="select-project" class="input">
+                <option value="">Loading projects…</option>
+              </select>
+              <div class="field-help">Shortage response work items and owner follow-up tasks are created in this project.</div>
+            </div>
+
+            <div class="field">
+              <div class="consent-box">
+                <label for="chk-autocreate">
+                  <input type="checkbox" id="chk-autocreate">
+                  <div>
+                    <strong>Auto-create Jira responses on new matched shortages</strong>
+                    <span>Optional admin opt-in. When disabled, Shortfall never creates Jira work items or tasks without explicit per-shortage person confirmation.</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="input-fda-key">openFDA API Key (optional)</label>
+              <input type="password" id="input-fda-key" class="input mono" autocomplete="off" placeholder="Leave blank to use default openFDA quota">
+              <div class="field-help">Raises openFDA API rate limits. Stored in Forge app settings; never exposed in browser logs.</div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" id="btn-save-settings">Save settings</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <h2>Hospital Drug List (Formulary)</h2>
+            <span class="meta-pill"><strong id="setup-formulary-count">0</strong> active items</span>
+          </div>
+          <p class="card-desc">Paste rows or upload a CSV file (<code class="mono">name, ndc, dosage_form</code> — one drug per line; NDC and dosage form are optional). Exact presentations are never merged.</p>
+
+          <div class="upload-row">
+            <label class="btn btn-sm" for="csv-file-input" style="cursor:pointer;">Upload CSV file</label>
+            <input type="file" id="csv-file-input" accept=".csv,.txt,text/csv,text/plain" hidden>
+            <button type="button" class="btn btn-sm btn-ghost" id="btn-csv-example">Insert format example</button>
+          </div>
+
+          <textarea id="csv-textarea" class="input" placeholder="name, ndc, dosage_form&#10;cefazolin in dextrose 2 g/100 mL premix, 0338-3508-41, injection&#10;ropivacaine HCl injection, 70069-062-25, injection&#10;lidocaine HCl injection, , injection" aria-label="Formulary CSV input"></textarea>
+
+          <div class="parse-preview" id="csv-preview">Paste rows or upload a CSV to preview parsed formulary items.</div>
+
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
+            <button type="button" class="btn btn-primary" id="btn-import-csv" disabled>Import drug list</button>
+            <button type="button" class="btn btn-sm btn-ghost" id="btn-clear-csv">Clear</button>
+          </div>
+
+          <div class="sample-box">
+            <h3>Sample Hospital Sandbox</h3>
+            <p class="card-desc" style="margin-bottom:6px;">Fictional content, no patient data, created via normal Jira and Confluence APIs so you can test matching, Teamwork Graph enrichment, responses, and reversal end-to-end.</p>
+            <div id="sample-status" class="mono" style="font-size:11.5px;color:var(--sf-text-subtle);"></div>
+            <div class="sample-actions">
+              <button type="button" class="btn" id="btn-load-sample">Load sample hospital</button>
+              <button type="button" class="btn" id="btn-remove-sample">Remove sample hospital</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Sync Audit -->
+    <section class="tab-panel" role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" hidden>
+      <div class="audit-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Kind</th>
+              <th>State</th>
+              <th>Started</th>
+              <th>Finished</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="sync-log-body">
+            <tr><td colspan="6">Loading sync history…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.</p>
+      <p>Shortfall stores no patient data and never recommends substitute drugs. Every shortage presentation links directly to its FDA source record.</p>
+    </footer>
   </div>
 
-  <div id="last-sync"></div>
-
-  <div id="reduced" hidden>
-    <strong>Reduced mode</strong> — the app could not read:
-    <ul id="reduced-list"></ul>
+  <!-- Slide-Over Shortage Detail Drawer -->
+  <div id="drawer-backdrop" class="drawer-backdrop" hidden>
+    <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabindex="-1">
+      <div class="drawer-head">
+        <div style="min-width:0;">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;" id="drawer-badges"></div>
+          <h2 id="drawer-title">Shortage detail</h2>
+          <p class="drawer-pres" id="drawer-pres"></p>
+        </div>
+        <button type="button" class="btn btn-sm" id="drawer-close" aria-label="Close detail drawer">Close (Esc)</button>
+      </div>
+      <div class="drawer-body" id="drawer-body"></div>
+      <div class="drawer-foot" id="drawer-foot">
+        Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.
+      </div>
+    </div>
   </div>
-
-  <div class="actions">
-    <button id="btn-sync">Sync now</button>
-    <button id="btn-sample" class="secondary">Load sample hospital</button>
-    <button id="btn-remove" class="secondary">Remove sample hospital</button>
-    <button id="btn-enrich" class="secondary">Enrich owners (Teamwork Graph)</button>
-  </div>
-  <div id="progress" hidden>Sync running… <span id="progress-detail"></span></div>
-  <div id="action-out"></div>
-
-  <h2>Matched shortages</h2>
-  <table>
-    <thead><tr><th>Package NDC</th><th>Drug</th><th>Presentation</th><th>Matched to</th><th>Reason</th><th>FDA status</th></tr></thead>
-    <tbody id="matches"></tbody>
-  </table>
-
-  <h2>Sync log</h2>
-  <table>
-    <thead><tr><th>Run</th><th>Kind</th><th>State</th><th>Started</th><th>Finished</th><th>Result</th></tr></thead>
-    <tbody id="sync-log"></tbody>
-  </table>
-
-  <p class="disclaimer">Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.</p>
 
   <script src="app.js" defer></script>
 </body>

@@ -18,6 +18,8 @@ modules:
   confluence:contentBylineItem:
     - key: shortage-page-notice
       resource: byline-ui
+      resolver:
+        function: ui-resolver
       title: Shortfall
       tooltip: Drug shortage status for this page
       icon: resource:icons;icon-alert.svg
@@ -127,6 +129,43 @@ modules:
           type: string
           required: true
           description: Short task summary, e.g. "Review insulin protocol for shortage"
+    - key: get-reversal-checklist
+      name: Get reversal checklist
+      function: fn-reversal-list
+      actionVerb: GET
+      description: |
+        List temporary changes logged across shortage responses and flag any
+        whose FDA shortage is now marked Resolved so they can be reversed.
+      inputs:
+        state:
+          title: Change state
+          type: string
+          required: false
+          description: Filter by state (open, reversal_open, reversed, or all; defaults to open)
+    - key: log-temporary-change
+      name: Log temporary change
+      function: fn-log-temp-change
+      actionVerb: CREATE
+      description: |
+        Record a temporary protocol, order-set, or workflow change made during
+        a shortage response so it is tracked for reversal when supply returns.
+        Always confirm with the person before calling this action.
+      inputs:
+        shortageId:
+          title: Shortage ID
+          type: string
+          required: true
+          description: The shortage identifier the response belongs to
+        description:
+          title: Change description
+          type: string
+          required: true
+          description: Short description of the temporary change put in place
+        impactItemId:
+          title: Impact item ID
+          type: string
+          required: false
+          description: Optional numeric ID of the affected Confluence page or Jira impact item
 
   rovo:agent:
     - key: shortage-agent
@@ -148,6 +187,8 @@ modules:
         - get-response-status
         - draft-clinician-message
         - create-response-task
+        - get-reversal-checklist
+        - log-temporary-change
       skills:
         - drug-shortage-response
 
@@ -163,6 +204,8 @@ modules:
           - get-response-status
           - draft-clinician-message
           - create-response-task
+          - get-reversal-checklist
+          - log-temporary-change
 
   rovo:mcp:
     - key: shortfall-mcp
@@ -173,6 +216,7 @@ modules:
         - get-past-responses
         - get-response-status
         - draft-clinician-message
+        - get-reversal-checklist
 
   sql:
     - key: main
@@ -207,6 +251,10 @@ modules:
       handler: index.draftClinicianMessage
     - key: fn-create-task
       handler: index.createResponseTask
+    - key: fn-reversal-list
+      handler: index.getReversalChecklist
+    - key: fn-log-temp-change
+      handler: index.logTemporaryChange
     - key: fn-web-sync
       handler: index.webSync
     - key: fn-web-report

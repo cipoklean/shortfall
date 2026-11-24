@@ -2,15 +2,262 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Shortage impact</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shortage Status — Shortfall</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 12px; color: #1d2125; font-size: 14px; }
-    .st { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; padding: 2px 8px; border-radius: 4px; border: 1px solid #1d2125; background: #e56910; }
-    .fine { font-size: 11px; color: #44546f; }
+    :root {
+      --sf-bg: var(--ds-surface, #ffffff);
+      --sf-raised: var(--ds-surface-raised, #ffffff);
+      --sf-sunken: var(--ds-surface-sunken, #f4f2ea);
+      --sf-hover: var(--ds-background-neutral-subtle-hovered, rgba(28, 26, 21, 0.045));
+
+      --sf-text: var(--ds-text, #1c1a15);
+      --sf-text-subtle: var(--ds-text-subtle, #55534a);
+      --sf-text-subtlest: var(--ds-text-subtlest, #6b685e);
+      --sf-link: var(--ds-link, #0c66e4);
+
+      --sf-border: var(--ds-border, #d8d3bf);
+      --sf-border-bold: var(--ds-border-bold, #85806f);
+      --sf-focus: var(--ds-border-focused, #d9820b);
+
+      --sf-amber: #d9820b;
+      --sf-amber-ink: #1c1a15;
+      --sf-amber-tint: rgba(217, 130, 11, 0.13);
+      --sf-red: #b3261e;
+      --sf-red-ink: #ffffff;
+      --sf-red-tint: rgba(179, 38, 30, 0.12);
+      --sf-teal: #0e7a66;
+      --sf-teal-ink: #ffffff;
+      --sf-teal-text: #0b6655;
+      --sf-teal-tint: rgba(14, 122, 102, 0.12);
+
+      --sf-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+      --sf-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    html[data-color-mode="dark"] {
+      --sf-amber-tint: rgba(217, 130, 11, 0.18);
+      --sf-red-tint: rgba(179, 38, 30, 0.22);
+      --sf-teal-text: #38c2a5;
+      --sf-teal-tint: rgba(14, 122, 102, 0.22);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 12px 14px 14px;
+      background: var(--sf-bg);
+      color: var(--sf-text);
+      font-family: var(--sf-sans);
+      font-size: 13px;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--sf-link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    :focus-visible {
+      outline: 2px solid var(--sf-focus);
+      outline-offset: 2px;
+    }
+
+    .mono {
+      font-family: var(--sf-mono);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-bottom: 10px;
+      border-bottom: 1.5px solid var(--sf-border);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand svg {
+      width: 22px;
+      height: 22px;
+      color: var(--sf-text);
+      flex: 0 0 22px;
+    }
+
+    .sticker {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1.5px solid #1c1a15;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
+    .sticker-current { background: var(--sf-amber); color: var(--sf-amber-ink); border-color: #1c1a15; }
+    .sticker-discontinued { background: var(--sf-red); color: var(--sf-red-ink); border-color: #7a1611; }
+    .sticker-resolved { background: var(--sf-teal); color: var(--sf-teal-ink); border-color: #095244; }
+    .sticker-plain { background: var(--sf-sunken); color: var(--sf-text); border-color: var(--sf-border-bold); }
+
+    .chip-graph {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1.5px solid var(--sf-teal);
+      background: var(--sf-teal-tint);
+      color: var(--sf-teal-text);
+      white-space: nowrap;
+    }
+
+    .chip-issue {
+      display: inline-flex;
+      align-items: center;
+      font-family: var(--sf-mono);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1px solid var(--sf-border-bold);
+      background: var(--sf-sunken);
+      color: var(--sf-link);
+      white-space: nowrap;
+    }
+    .chip-issue:hover { background: var(--sf-hover); text-decoration: none; }
+
+    .lead {
+      margin: 10px 0 8px;
+      font-size: 12.5px;
+      color: var(--sf-text-subtle);
+    }
+
+    .pres-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .pres-card {
+      padding: 8px 10px;
+      border: 1px solid var(--sf-border);
+      border-left: 3px solid var(--sf-amber);
+      border-radius: 4px;
+      background: var(--sf-sunken);
+    }
+    .pres-card.is-graph {
+      border-left-color: var(--sf-teal);
+    }
+
+    .pres-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .pres-name {
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--sf-text);
+    }
+
+    .pres-detail {
+      margin: 3px 0 0;
+      font-size: 12px;
+      color: var(--sf-text-subtle);
+    }
+
+    .pres-meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+      margin-top: 5px;
+      font-size: 11.5px;
+    }
+
+    .section-box {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      border: 1px solid var(--sf-border);
+      background: var(--sf-raised);
+    }
+
+    .section-label {
+      display: block;
+      margin-bottom: 4px;
+      font-family: var(--sf-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--sf-text-subtle);
+    }
+
+    .temp-list {
+      margin: 5px 0 0;
+      padding-left: 16px;
+      font-size: 12px;
+    }
+    .temp-list li { margin: 2px 0; }
+
+    .empty {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 12px;
+      border: 1px dashed var(--sf-border-bold);
+      border-radius: 4px;
+      background: var(--sf-sunken);
+    }
+    .empty svg {
+      width: 28px;
+      height: 28px;
+      flex: 0 0 28px;
+      color: var(--sf-text-subtle);
+    }
+    .empty strong { display: block; font-size: 13px; }
+    .empty p { margin: 2px 0 0; font-size: 12px; color: var(--sf-text-subtle); }
+
+    .err {
+      padding: 8px 10px;
+      border: 1px solid var(--sf-red);
+      border-radius: 4px;
+      background: var(--sf-red-tint);
+      font-size: 12px;
+    }
+
+    .disclaimer {
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--sf-border);
+      font-size: 10.5px;
+      color: var(--sf-text-subtlest);
+    }
   </style>
 </head>
 <body>
-  <div id="notice">Checking shortage status…</div>
+  <div id="notice" aria-live="polite">Checking FDA shortage status…</div>
   <script src="app.js" defer></script>
 </body>
 </html>

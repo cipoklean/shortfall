@@ -23,21 +23,23 @@ form. Every presentation stays a separate row."
 *Show the matched list, open one shortage.* "Each row links straight back
 to its FDA record."
 
-## 1:10–2:00 — Impact map
+## 1:10–2:00 — Impact map & 2nd-hop blast radius
 
-*Screen: shortage detail.*
+*Screen: click a shortage row to open the Shortage Detail Drawer, then click Enrich owners.*
 
 "Here's what it touches: the Confluence protocols and open Jira work that
 name the drug, each with an owner and team resolved through the Teamwork
-Graph — and earlier responses to the same drug, so the site reuses its own
-decisions."
+Graph — plus a 2nd-hop blast radius showing downstream protocols linked to
+those affected pages, and earlier responses to the same drug so the site
+reuses its own decisions."
 
 ## 2:00–2:40 — Respond and mark
 
-*Screen: Jira work item, then an affected Confluence page byline.*
+*Screen: Jira response work item (per-owner tasks + Temporary Changes checklist), then an affected Confluence page byline.*
 
-"One work item per shortage, a task per owner. Affected pages carry a
-notice linking back to the response."
+"One work item per shortage, a task per owner, and a temporary-change
+checklist to log every workaround. Affected Confluence pages carry a byline
+notice linking straight back to the response."
 
 ## 2:40–3:30 — The agent drafts
 
@@ -48,12 +50,14 @@ answers with linked sources — and drafts the conservation plan only from
 the site's own documented decisions. It never recommends a substitute drug,
 and a person approves before anything is written."
 
-## 3:30–4:10 — Reverse
+## 3:30–4:10 — Reverse temporary changes
 
-*Screen: resolved shortage → reversal tasks.*
+*Screen: resolved shortage → Temporary Changes & Reversal Checklist + opened reversal tasks.*
 
-"When the FDA marks the shortage resolved, every temporary change gets a
-reversal task and the page notices clear."
+"When the FDA marks the shortage resolved, Shortfall turns every logged
+temporary change into a tracked reversal task on the checklist — so
+workarounds don't become permanent — and clears the Confluence page
+notices."
 
 ## 4:10–4:40 — Guardrails and close
 

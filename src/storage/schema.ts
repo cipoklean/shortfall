@@ -157,6 +157,62 @@ migrationRunner.enqueue(
    WHERE m1.superseded = 0`,
 );
 
+// Track 1st-hop vs 2nd-hop Teamwork Graph blast-radius impact items.
+migrationRunner.enqueue(
+  '010-impact-hop',
+  `ALTER TABLE impact_item ADD COLUMN hop TINYINT DEFAULT 1`,
+);
+
+// Record the Confluence space key on impacted pages for space-level grouping.
+migrationRunner.enqueue(
+  '011-impact-space',
+  `ALTER TABLE impact_item ADD COLUMN space_key VARCHAR(64)`,
+);
+
+// Capture P&T / clinical decision summary on shortage responses for institutional memory.
+migrationRunner.enqueue(
+  '012-response-decision',
+  `ALTER TABLE response ADD COLUMN decision_summary TEXT`,
+);
+
+// Persist manufacturer contact info from openFDA shortage records.
+migrationRunner.enqueue(
+  '013-shortage-contact',
+  `ALTER TABLE shortage ADD COLUMN contact_info VARCHAR(512)`,
+);
+
+// Clean legacy 10-digit ndc:XXXXXXXXXX keys so 11-digit normalized keys replace them cleanly.
+migrationRunner.enqueue(
+  '014-match-unique-clean',
+  `DELETE FROM shortage WHERE shortage_key LIKE 'ndc:%' AND CHAR_LENGTH(shortage_key) = 14`,
+);
+
+migrationRunner.enqueue(
+  '015-match-clean-10digit',
+  `DELETE FROM \`match\` WHERE shortage_key LIKE 'ndc:%' AND CHAR_LENGTH(shortage_key) = 14`,
+);
+
+migrationRunner.enqueue(
+  '016-impact-clean-10digit',
+  `DELETE FROM impact_item WHERE shortage_key LIKE 'ndc:%' AND CHAR_LENGTH(shortage_key) = 14`,
+);
+
+/** Execute a parameterized SELECT query and return its rows. */
+export async function query<T = Record<string, unknown>>(
+  statement: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  const safeParams = params.map((p) => (p === undefined ? null : p));
+  const res = await sql.prepare<T>(statement).bindParams(...safeParams).execute();
+  return Array.isArray(res.rows) ? (res.rows as T[]) : [];
+}
+
+/** Execute a parameterized INSERT / UPDATE / DELETE statement. */
+export async function execute(statement: string, params: unknown[] = []): Promise<void> {
+  const safeParams = params.map((p) => (p === undefined ? null : p));
+  await sql.prepare(statement).bindParams(...safeParams).execute();
+}
+
 /** Apply pending migrations. Idempotent; safe to call at every job start. */
 export async function runMigrations(): Promise<string[]> {
   return migrationRunner.run();

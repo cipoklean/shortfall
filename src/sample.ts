@@ -1,7 +1,8 @@
 import api, { route, Route } from '@forge/api';
 import { kvs } from '@forge/kvs';
-import { sql } from './storage/schema';
-import { RxNavClient } from './rxnav';
+import type { UpdateQueryResponse } from '@forge/sql';
+import { sql, query, execute } from './storage/schema';
+import { RxNavClient, mapWithConcurrency } from './rxnav';
 import { normalizeDrugName, stripSalts, normalizeNdc } from './match';
 import { FormularyItem } from './types';
 import { getSettings, saveSettings } from './settings';
@@ -43,10 +44,17 @@ const SAMPLE_DRUGS: SampleDrug[] = [
 const SPACE_KEY = 'SHOSP';
 const KVS_KEY = 'sampleHospital';
 
+const HIST_SHORTAGE_KEY = 'sample-hist:cefazolin-2025';
+const HIST_ISSUE_KEY = 'HIST-2025-CEF';
+const REV_SHORTAGE_KEY = 'ndc:72205010207';
+const REV_ISSUE_KEY = 'SAMPLE-REV-BUM';
+
 interface SampleRefs {
   spaceKey?: string;
   pageIds: string[];
   formularyIds: string[];
+  responseIds?: number[];
+  tempChangeIds?: number[];
   projectKey?: string;
 }
 
@@ -75,19 +83,39 @@ const SAMPLE_PAGES: { title: string; body: string }[] = [
     title: 'Drug shortage response log',
     body: `<p>Fictional running log of past shortage responses at Sample Hospital.</p><p><strong>2025-09 — cefazolin injection shortage:</strong> consented to conserve premixed bags to OR cases only; floor stock converted to pharmacy-compounded syringes. Restriction documented on the P&amp;T minutes page. Reversed 2025-11 when supply returned.</p><p><strong>2025-04 — lidocaine injection shortage:</strong> restricted to code carts and procedures; topical jelly substituted for bedside use.</p>`,
   },
+  {
+    title: 'Orthopedic arthroplasty admission order set',
+    body: `<p>Fictional sample order set for elective total hip and knee arthroplasty admissions at Sample Hospital.</p><p>Preoperative antimicrobial prophylaxis: follow the <ac:link><ri:page ri:content-title="Cefazolin surgical prophylaxis protocol" /></ac:link> prior to skin incision.</p><p>Postoperative mobilization, DVT prophylaxis, and multimodal analgesia follow standard orthopedic care pathways.</p>`,
+  },
 ];
 
+function extractInsertId(rows: unknown): number | undefined {
+  if (!rows) return undefined;
+  if (Array.isArray(rows)) {
+    const first = rows[0] as { insertId?: number } | undefined;
+    return first?.insertId;
+  }
+  return (rows as { insertId?: number }).insertId;
+}
+
 async function getRefs(): Promise<SampleRefs> {
-  return (await kvs.get(KVS_KEY)) as SampleRefs ?? { pageIds: [], formularyIds: [] };
+  const stored = (await kvs.get(KVS_KEY)) as Partial<SampleRefs> | undefined;
+  return {
+    spaceKey: stored?.spaceKey,
+    pageIds: stored?.pageIds ?? [],
+    formularyIds: stored?.formularyIds ?? [],
+    responseIds: stored?.responseIds ?? [],
+    tempChangeIds: stored?.tempChangeIds ?? [],
+    projectKey: stored?.projectKey,
+  };
 }
 
 async function confluenceRequest(path: Route, init: { method?: string; body?: string } = {}) {
-  const res = await api.asApp().requestConfluence(path, {
+  return api.asApp().requestConfluence(path, {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     method: init.method ?? 'GET',
     ...(init.body !== undefined ? { body: init.body } : {}),
   });
-  return res;
 }
 
 async function ensureSpace(): Promise<{ key: string; id: string }> {
@@ -104,12 +132,32 @@ async function ensureSpace(): Promise<{ key: string; id: string }> {
     body: JSON.stringify({
       key: SPACE_KEY,
       name: 'Sample Hospital',
-      description: { plain: { value: 'Fictional sample content created by Shortfall for demonstration. No patient data.', representation: 'plain' } },
+      description: {
+        plain: {
+          value: 'Fictional sample content created by Shortfall for demonstration. No patient data.',
+          representation: 'plain',
+        },
+      },
     }),
   });
   if (!res.ok) throw new Error(`space create failed: HTTP ${res.status} ${await res.text()}`);
   const created = (await res.json()) as { id: number };
   return { key: SPACE_KEY, id: String(created.id) };
+}
+
+async function listExistingPagesInSpace(spaceId: string): Promise<Map<string, string>> {
+  const byTitle = new Map<string, string>();
+  const res = await confluenceRequest(route`/wiki/api/v2/spaces/${spaceId}/pages?limit=100`);
+  if (!res.ok) return byTitle;
+  const data = (await res.json()) as {
+    results?: { id: string; title: string; status?: string }[];
+  };
+  for (const p of data.results ?? []) {
+    if (!p.status || p.status === 'current') {
+      byTitle.set(p.title, String(p.id));
+    }
+  }
+  return byTitle;
 }
 
 async function createPage(spaceId: string, title: string, body: string): Promise<string> {
@@ -128,31 +176,155 @@ async function createPage(spaceId: string, title: string, body: string): Promise
 }
 
 async function insertFormularyItem(item: FormularyItem): Promise<void> {
-  const esc = (s: string) => s.replace(/'/g, "''");
-  await sql.executeRaw(
+  await execute(
     `INSERT INTO formulary_item (id, display_name, ingredient_names, ingredient_rxcuis, package_ndcs, dosage_forms, active)
-     VALUES ('${esc(item.id)}', '${esc(item.displayName)}', '${esc(JSON.stringify(item.ingredientNames))}', '${esc(JSON.stringify(item.ingredientRxcuis))}', '${esc(JSON.stringify(item.packageNdcs))}', '${esc(JSON.stringify(item.dosageForms))}', 1)
-     ON DUPLICATE KEY UPDATE display_name = VALUES(display_name), ingredient_names = VALUES(ingredient_names), ingredient_rxcuis = VALUES(ingredient_rxcuis), package_ndcs = VALUES(package_ndcs), dosage_forms = VALUES(dosage_forms), active = 1`,
+     VALUES (?, ?, ?, ?, ?, ?, 1)
+     ON DUPLICATE KEY UPDATE
+       display_name = VALUES(display_name),
+       ingredient_names = VALUES(ingredient_names),
+       ingredient_rxcuis = VALUES(ingredient_rxcuis),
+       package_ndcs = VALUES(package_ndcs),
+       dosage_forms = VALUES(dosage_forms),
+       active = 1`,
+    [
+      item.id,
+      item.displayName,
+      JSON.stringify(item.ingredientNames),
+      JSON.stringify(item.ingredientRxcuis),
+      JSON.stringify(item.packageNdcs),
+      JSON.stringify(item.dosageForms),
+    ],
   );
 }
 
-/** Load the sample hospital: space + protocol pages + formulary. Idempotent. */
-export async function loadSampleHospital(): Promise<{ spaceKey: string; pageIds: string[]; formularyCount: number; warnings?: string[] }> {
+async function seedSampleHistoryAndReversal(refs: SampleRefs): Promise<void> {
+  const responseIds = new Set<number>(refs.responseIds ?? []);
+  const tempChangeIds = new Set<number>(refs.tempChangeIds ?? []);
+
+  // 1. Seed a historical resolved Cefazolin shortage response for "What did we do last time?".
+  const existingHist = await query<{ id: number }>(
+    `SELECT id FROM response WHERE shortage_key = ? LIMIT 1`,
+    [HIST_SHORTAGE_KEY],
+  );
+  if (existingHist.length) {
+    responseIds.add(existingHist[0].id);
+  } else {
+    const res = await sql
+      .prepare<UpdateQueryResponse>(
+        `INSERT INTO response (shortage_key, ingredient, jira_issue_key, jira_issue_id, state, opened_at, resolved_at, reversal_needed, decision_summary)
+         VALUES (?, ?, ?, ?, 'resolved', '2025-09-10 09:00:00', '2025-11-18 14:30:00', 0, ?)`,
+      )
+      .bindParams(
+        HIST_SHORTAGE_KEY,
+        'Cefazolin in Dextrose Injection',
+        HIST_ISSUE_KEY,
+        'sample-hist-cef',
+        '2025-09 P&T decision: Conserved premix 2 g bags for OR surgical prophylaxis only; converted floor stock to pharmacy-compounded syringes. Reversed 2025-11 when FDA marked supply resolved.',
+      )
+      .execute();
+    const id =
+      extractInsertId(res.rows) ??
+      (
+        await query<{ id: number }>(
+          `SELECT id FROM response WHERE shortage_key = ? ORDER BY id DESC LIMIT 1`,
+          [HIST_SHORTAGE_KEY],
+        )
+      )[0]?.id;
+    if (id) responseIds.add(id);
+  }
+
+  // 2. Seed a sample response + open temporary change attached to a Resolved FDA shortage
+  // (ndc:72205010207, Bumetanide Injection) so the Reversal Checklist works out of the box.
+  let bumResponseId: number | undefined;
+  const existingBum = await query<{ id: number }>(
+    `SELECT id FROM response WHERE shortage_key = ? AND jira_issue_key = ? LIMIT 1`,
+    [REV_SHORTAGE_KEY, REV_ISSUE_KEY],
+  );
+  if (existingBum.length) {
+    bumResponseId = existingBum[0].id;
+    responseIds.add(bumResponseId);
+  } else {
+    const res = await sql
+      .prepare<UpdateQueryResponse>(
+        `INSERT INTO response (shortage_key, ingredient, jira_issue_key, jira_issue_id, state, opened_at, reversal_needed, decision_summary)
+         VALUES (?, ?, ?, ?, 'open', NOW(), 1, ?)`,
+      )
+      .bindParams(
+        REV_SHORTAGE_KEY,
+        'Bumetanide Injection',
+        REV_ISSUE_KEY,
+        'sample-rev-bum',
+        'Temporary conservation notice posted for IV bumetanide vials during supply constraint; awaiting reversal confirmation after FDA resolution.',
+      )
+      .execute();
+    bumResponseId =
+      extractInsertId(res.rows) ??
+      (
+        await query<{ id: number }>(
+          `SELECT id FROM response WHERE shortage_key = ? AND jira_issue_key = ? ORDER BY id DESC LIMIT 1`,
+          [REV_SHORTAGE_KEY, REV_ISSUE_KEY],
+        )
+      )[0]?.id;
+    if (bumResponseId) responseIds.add(bumResponseId);
+  }
+
+  if (bumResponseId) {
+    const existingChange = await query<{ id: number }>(
+      `SELECT id FROM temporary_change WHERE response_id = ? LIMIT 1`,
+      [bumResponseId],
+    );
+    if (existingChange.length) {
+      tempChangeIds.add(existingChange[0].id);
+    } else {
+      const tcRes = await sql
+        .prepare<UpdateQueryResponse>(
+          `INSERT INTO temporary_change (response_id, description, state, created_at)
+           VALUES (?, ?, 'open', NOW())`,
+        )
+        .bindParams(
+          bumResponseId,
+          'Remove temporary IV bumetanide vial conservation alert from ICU diuretic order set',
+        )
+        .execute();
+      const tcId =
+        extractInsertId(tcRes.rows) ??
+        (
+          await query<{ id: number }>(
+            `SELECT id FROM temporary_change WHERE response_id = ? ORDER BY id DESC LIMIT 1`,
+            [bumResponseId],
+          )
+        )[0]?.id;
+      if (tcId) tempChangeIds.add(tcId);
+    }
+  }
+
+  refs.responseIds = [...responseIds];
+  refs.tempChangeIds = [...tempChangeIds];
+}
+
+/** Load the sample hospital: space + protocol pages + formulary + sample history/reversal. Idempotent. */
+export async function loadSampleHospital(): Promise<{
+  spaceKey: string;
+  pageIds: string[];
+  formularyCount: number;
+  warnings?: string[];
+}> {
   const refs = await getRefs();
   const warnings: string[] = [];
 
   const space = await ensureSpace();
   refs.spaceKey = space.key;
 
-  // Count the sample space as clinical content unless the admin chose others.
   const settings = await getSettings();
-  if (!settings.clinicalSpaceKeys.length || !settings.clinicalSpaceKeys.includes(SPACE_KEY)) {
+  if (!settings.clinicalSpaceKeys.includes(SPACE_KEY)) {
     await saveSettings({ clinicalSpaceKeys: [...settings.clinicalSpaceKeys, SPACE_KEY] });
   }
 
+  const existingPages = await listExistingPagesInSpace(space.id);
   for (const page of SAMPLE_PAGES) {
     try {
-      const id = await createPage(space.id, page.title, page.body);
+      const existingId = existingPages.get(page.title);
+      const id = existingId ?? (await createPage(space.id, page.title, page.body));
       if (!refs.pageIds.includes(id)) refs.pageIds.push(id);
     } catch (e) {
       warnings.push(`page "${page.title}": ${String(e)}`);
@@ -163,7 +335,8 @@ export async function loadSampleHospital(): Promise<{ spaceKey: string; pageIds:
     cacheGet: (k) => kvs.get(k),
     cacheSet: (k, v) => kvs.set(k, v),
   });
-  for (const drug of SAMPLE_DRUGS) {
+
+  await mapWithConcurrency(SAMPLE_DRUGS, 4, async (drug) => {
     const rxcuis: string[] = [];
     for (const ing of drug.ingredients) {
       try {
@@ -172,26 +345,41 @@ export async function loadSampleHospital(): Promise<{ spaceKey: string; pageIds:
           const ins = await rxnav.ingredientsForRxcui(rxcui);
           rxcuis.push(...(ins.length ? ins.map((i) => i.rxcui) : [rxcui]));
         }
-      } catch { /* names alone still match via fallback */ }
+      } catch {
+        /* names alone still match via fallback */
+      }
     }
     const item: FormularyItem = {
       id: drug.id,
       displayName: drug.displayName,
       ingredientNames: drug.ingredients.map((n) => stripSalts(normalizeDrugName(n))),
       ingredientRxcuis: rxcuis,
-      packageNdcs: drug.packageNdcs.map((n) => normalizeNdc(n)!).filter(Boolean),
+      packageNdcs: drug.packageNdcs
+        .map((n) => normalizeNdc(n))
+        .filter((n): n is string => Boolean(n)),
       dosageForms: drug.dosageForms.map(normalizeDrugName),
     };
     await insertFormularyItem(item);
     if (!refs.formularyIds.includes(drug.id)) refs.formularyIds.push(drug.id);
-  }
+  });
+
+  await seedSampleHistoryAndReversal(refs);
 
   await kvs.set(KVS_KEY, refs);
-  return { spaceKey: space.key, pageIds: refs.pageIds, formularyCount: refs.formularyIds.length, warnings: warnings.length ? warnings : undefined };
+  return {
+    spaceKey: space.key,
+    pageIds: refs.pageIds,
+    formularyCount: refs.formularyIds.length,
+    warnings: warnings.length ? warnings : undefined,
+  };
 }
 
-/** Remove exactly what loadSampleHospital created. */
-export async function removeSampleHospital(): Promise<{ removedPages: number; removedFormulary: number; warnings?: string[] }> {
+/** Remove everything loadSampleHospital created, including sample history, matches, and orphaned impacts. */
+export async function removeSampleHospital(): Promise<{
+  removedPages: number;
+  removedFormulary: number;
+  warnings?: string[];
+}> {
   const refs = await getRefs();
   const warnings: string[] = [];
   let removedPages = 0;
@@ -200,19 +388,62 @@ export async function removeSampleHospital(): Promise<{ removedPages: number; re
     const del = await confluenceRequest(route`/wiki/api/v2/pages/${id}`, { method: 'DELETE' });
     if (del.ok || del.status === 404) removedPages++;
     else warnings.push(`delete page ${id}: HTTP ${del.status}`);
+    await execute(`DELETE FROM impact_item WHERE kind = 'page' AND ref_id = ?`, [id]);
+  }
+
+  // Delete sample temporary changes and sample responses.
+  for (const tcId of refs.tempChangeIds ?? []) {
+    await execute(`DELETE FROM temporary_change WHERE id = ?`, [tcId]);
+  }
+  for (const respId of refs.responseIds ?? []) {
+    await execute(`DELETE FROM temporary_change WHERE response_id = ?`, [respId]);
+    await execute(`DELETE FROM response WHERE id = ?`, [respId]);
+  }
+  // Safety-net cleanup by known sample keys in case refs were partially recorded.
+  const leftoverSampleResponses = await query<{ id: number }>(
+    `SELECT id FROM response WHERE shortage_key = ? OR jira_issue_key IN (?, ?)`,
+    [HIST_SHORTAGE_KEY, HIST_ISSUE_KEY, REV_ISSUE_KEY],
+  );
+  for (const r of leftoverSampleResponses) {
+    await execute(`DELETE FROM temporary_change WHERE response_id = ?`, [r.id]);
+    await execute(`DELETE FROM response WHERE id = ?`, [r.id]);
   }
 
   let removedFormulary = 0;
   for (const id of refs.formularyIds) {
-    await sql.executeRaw(`DELETE FROM formulary_item WHERE id = '${id.replace(/'/g, "''")}'`);
+    await execute(`DELETE FROM \`match\` WHERE formulary_item_id = ?`, [id]);
+    await execute(`DELETE FROM formulary_item WHERE id = ?`, [id]);
     removedFormulary++;
   }
 
-  await kvs.set(KVS_KEY, { pageIds: [], formularyIds: [] });
-  const out = { removedPages, removedFormulary, warnings: warnings.length ? warnings : undefined };
+  // Delete orphaned impact_item rows no longer referenced by any active match.
+  await execute(
+    `DELETE FROM impact_item
+     WHERE shortage_key NOT IN (SELECT DISTINCT shortage_key FROM \`match\` WHERE superseded = 0)`,
+  );
+
+  // Remove SHOSP from clinicalSpaceKeys.
+  const settings = await getSettings();
+  if (settings.clinicalSpaceKeys.includes(SPACE_KEY)) {
+    await saveSettings({
+      clinicalSpaceKeys: settings.clinicalSpaceKeys.filter((k) => k !== SPACE_KEY),
+    });
+  }
+
+  await kvs.set(KVS_KEY, {
+    pageIds: [],
+    formularyIds: [],
+    responseIds: [],
+    tempChangeIds: [],
+  });
+
   // Note: Confluence exposes no space-delete API; the empty Sample Hospital
   // space shell is left behind if it was created.
-  return out;
+  return {
+    removedPages,
+    removedFormulary,
+    warnings: warnings.length ? warnings : undefined,
+  };
 }
 
 export async function getSampleState() {

@@ -81,7 +81,7 @@
       </g>
       <!-- THE GAP: empty slot, dashed outline -->
       <rect x="388" y="68" width="104" height="184" fill="none" stroke="#d9820b" stroke-width="3" stroke-dasharray="8 6"/>
-      <text x="440" y="272" text-anchor="middle" font-family="'IBM Plex Mono',monospace" font-size="11" fill="#d9820b" letter-spacing="2">SHORT SUPPLY</text>
+      <text x="440" y="272" text-anchor="middle" font-family="'IBM Plex Mono',monospace" font-size="11" fill="#8f4f00" letter-spacing="2">SHORT SUPPLY</text>
       <!-- item 5: carton -->
       <g stroke="#1c1a15" stroke-width="2" fill="none">
         <rect x="524" y="108" width="72" height="142"/>
@@ -121,11 +121,11 @@
 </section>
 
 <!-- SHELF-GAP SCROLL SCENE: the gap connects to what it touches -->
-<div class="shelf-stage" aria-hidden="true">
+<div class="shelf-stage">
   <div class="shelf-sticky">
     <div class="wrap">
       <div class="shelf-scene">
-        <svg class="shelf-svg" viewBox="0 0 800 420">
+        <svg class="shelf-svg" viewBox="0 0 800 420" aria-hidden="true">
           <!-- connectors (drawn as vial lifts out) -->
           <g fill="none" stroke="#d9820b" stroke-width="2.5" stroke-dasharray="1" pathLength="1">
             <path class="conn" d="M400 300 C 400 200, 160 200, 160 96" style="stroke-dashoffset: calc(1 - var(--draw, 0));"/>

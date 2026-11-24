@@ -70,3 +70,7 @@ export interface IngredientRef {
 }
 
 export type IngredientIndex = Map<string, IngredientRef[]>;
+
+/** Required openFDA attribution/disclaimer shown alongside FDA shortage data. */
+export const OPENFDA_DISCLAIMER =
+  'Do not rely on openFDA to make decisions regarding medical care. While we make every effort to ensure that data is accurate, you should assume all results are unvalidated. We may limit or otherwise restrict your access to the API in line with our Terms of Service.';

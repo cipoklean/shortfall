@@ -68,3 +68,15 @@ Forge app (TypeScript) for Codegeist 2026 + a static landing page.
   Evidence URLs are gated on token = cloudId (forge logs show principal=undefined).
 - Demo evidence: site one-atlas-ojjg.atlassian.net, sample space SHOSP,
   response project PROC (response item PROC-126), dashboard via Jira Apps nav.
+- Atlassian Forge CLI lives at `/home/ubuntu/.local/bin/forge` (Foundry's
+  `~/.foundry/bin/forge` can shadow `forge` if PATH puts foundry first).
+- All Forge SQL queries use parameterized `query()` / `execute()` backed by
+  `sql.prepare().bindParams().execute()` — never `sql.executeRaw` string concat.
+- Teamwork Graph calls MUST use `api.asUser()` (NO `userId` argument; passing
+  `userId` activates offline impersonation -> NO_IMPERSONATION_SCOPES_DEFINED)
+  and `<company>_<operation>` GraphQL operation names (`shortfall_*`).
+- Custom UI iframes are sandboxed on Atlassian's Forge CDN origin: every
+  internal and external link MUST use `@forge/bridge` `router.open()` with
+  `siteUrl` prepended for relative paths (and `/wiki` for Confluence `webui`).
+- Diagnostic webtriggers require encrypted `SHORTFALL_DIAG_TOKEN` env var and
+  return HTTP 404 when unset (sealed by default on judge/prod sites).

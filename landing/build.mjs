@@ -43,6 +43,11 @@ for (const file of htmlFiles) {
     html = html.replaceAll(`{{${key}}}`, String(value));
   }
   writeFileSync(path, html);
+  if (file !== 'index.html') {
+    const cleanDir = join(dist, file.replace(/\.html$/, ''));
+    mkdirSync(cleanDir, { recursive: true });
+    writeFileSync(join(cleanDir, 'index.html'), html);
+  }
 }
 
 // Counter fallback also available as JSON for the runtime fetch path.

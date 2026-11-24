@@ -1,7 +1,8 @@
 import { Queue } from '@forge/events';
-import { sql, runMigrations } from './storage/schema';
+import type { UpdateQueryResponse } from '@forge/sql';
+import { sql, query, execute, runMigrations } from './storage/schema';
 import { fetchShortages } from './fda';
-import { RxNavClient } from './rxnav';
+import { RxNavClient, mapWithConcurrency } from './rxnav';
 import { matchShortages, shortageKey } from './match';
 import { getSettings } from './settings';
 import { kvs } from '@forge/kvs';
@@ -11,6 +12,11 @@ import { createResponsesForNewMatches, openReversalTasks } from './respond';
 
 const syncQueue = new Queue({ key: 'sync-queue' });
 
+const SHORTAGE_BATCH_SIZE = 40;
+const MATCH_BATCH_SIZE = 40;
+const STALE_ID_BATCH_SIZE = 100;
+const RXNAV_CONCURRENCY = 5;
+
 interface SyncProgress {
   fdaDone: number;
   fdaTotal: number;
@@ -19,45 +25,113 @@ interface SyncProgress {
   impactTotal: number;
 }
 
+interface StatusTransition {
+  from: string;
+  to: string;
+  at: string;
+}
+
+function extractInsertId(rows: unknown): number | undefined {
+  if (!rows) return undefined;
+  if (Array.isArray(rows)) {
+    const first = rows[0] as { insertId?: number } | undefined;
+    return first?.insertId;
+  }
+  return (rows as { insertId?: number }).insertId;
+}
+
+function trunc(s: string | undefined | null, max: number): string {
+  return (s ?? '').slice(0, max);
+}
+
+function parseHistory(raw: string | null | undefined): StatusTransition[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as StatusTransition[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function startSyncRun(kind: string): Promise<number> {
-  const res = await sql.executeRaw<{ insertId: number }>(
-    `INSERT INTO sync_run (kind, state, started_at) VALUES ('${kind}', 'running', NOW())`,
-  );
-  // Forge SQL returns insertId via rows for inserts where available; fall back to a lookup.
-  const id = res.rows?.[0]?.insertId;
+  const res = await sql
+    .prepare<UpdateQueryResponse>(
+      `INSERT INTO sync_run (kind, state, started_at) VALUES (?, 'running', NOW())`,
+    )
+    .bindParams(kind)
+    .execute();
+  const id = extractInsertId(res.rows);
   if (id) return id;
-  const lookup = await sql.executeRaw<{ id: number }>(
+  const lookup = await query<{ id: number }>(
     `SELECT id FROM sync_run WHERE state = 'running' ORDER BY id DESC LIMIT 1`,
   );
-  return lookup.rows?.[0]?.id ?? 0;
+  return lookup[0]?.id ?? 0;
 }
 
-async function updateSyncRun(id: number, patch: Partial<{ state: string; resumeCursor: string; progress: SyncProgress; result: string }>): Promise<void> {
+async function updateSyncRun(
+  id: number,
+  patch: Partial<{ state: string; resumeCursor: string; progress: SyncProgress; result: string }>,
+): Promise<void> {
   const sets: string[] = [];
-  if (patch.state) sets.push(`state = '${patch.state}'`);
-  if (patch.resumeCursor) sets.push(`resume_cursor = '${patch.resumeCursor}'`);
-  if (patch.progress) sets.push(`progress = '${JSON.stringify(patch.progress).replace(/'/g, "''")}'`);
-  if (patch.result !== undefined) sets.push(`result = '${patch.result.replace(/'/g, "''")}'`);
+  const params: unknown[] = [];
+  if (patch.state !== undefined) {
+    sets.push('state = ?');
+    params.push(patch.state);
+  }
+  if (patch.resumeCursor !== undefined) {
+    sets.push('resume_cursor = ?');
+    params.push(patch.resumeCursor);
+  }
+  if (patch.progress !== undefined) {
+    sets.push('progress = ?');
+    params.push(JSON.stringify(patch.progress));
+  }
+  if (patch.result !== undefined) {
+    sets.push('result = ?');
+    params.push(patch.result);
+  }
   if (!sets.length) return;
-  await sql.executeRaw(`UPDATE sync_run SET ${sets.join(', ')}${patch.state === 'done' || patch.state === 'error' ? ', finished_at = NOW()' : ''} WHERE id = ${id}`);
+  const finishedClause =
+    patch.state === 'done' || patch.state === 'error' ? ', finished_at = NOW()' : '';
+  params.push(id);
+  await execute(`UPDATE sync_run SET ${sets.join(', ')}${finishedClause} WHERE id = ?`, params);
 }
 
-/** Enqueue a sync job. Idempotent: skipped when a run is already active. */
-export async function enqueueSync(kind: 'scheduled' | 'manual' | 'impact'): Promise<{ queued: boolean }> {
-  const running = await sql.executeRaw<{ id: number }>(
+/**
+ * Enqueue a sync job. Clears stale locks older than 20 minutes first, then
+ * skips if another run is actively executing.
+ */
+export async function enqueueSync(
+  kind: 'scheduled' | 'manual' | 'impact',
+): Promise<{ queued: boolean }> {
+  await runMigrations();
+  await execute(
+    `UPDATE sync_run
+     SET state = 'error', finished_at = NOW(), result = 'Stale lock cleared (>20m)'
+     WHERE state = 'running' AND started_at < NOW() - INTERVAL 20 MINUTE`,
+  );
+  const running = await query<{ id: number }>(
     `SELECT id FROM sync_run WHERE state = 'running' LIMIT 1`,
   );
-  if (running.rows?.length) return { queued: false };
+  if (running.length) return { queued: false };
   await syncQueue.push({ body: { kind } });
   return { queued: true };
 }
 
 async function loadFormulary(): Promise<FormularyItem[]> {
-  const res = await sql.executeRaw<{
-    id: string; display_name: string; ingredient_names: string;
-    ingredient_rxcuis: string; package_ndcs: string; dosage_forms: string;
-  }>(`SELECT id, display_name, ingredient_names, ingredient_rxcuis, package_ndcs, dosage_forms FROM formulary_item WHERE active = 1`);
-  return (res.rows ?? []).map((r) => ({
+  const rows = await query<{
+    id: string;
+    display_name: string;
+    ingredient_names: string;
+    ingredient_rxcuis: string;
+    package_ndcs: string;
+    dosage_forms: string;
+  }>(
+    `SELECT id, display_name, ingredient_names, ingredient_rxcuis, package_ndcs, dosage_forms
+     FROM formulary_item WHERE active = 1`,
+  );
+  return rows.map((r) => ({
     id: r.id,
     displayName: r.display_name,
     ingredientNames: JSON.parse(r.ingredient_names ?? '[]'),
@@ -68,55 +142,140 @@ async function loadFormulary(): Promise<FormularyItem[]> {
 }
 
 /**
- * Build the rxcui→ingredient index needed by the matcher. Only rxcuis that
- * actually appear on fetched shortage records are resolved, so RxNav calls
- * stay bounded; results are cached in KVS.
+ * Build the rxcui -> ingredient index needed by the matcher. Resolves unique
+ * rxcuis concurrently with bounded parallelism and catches per-rxcui failures
+ * so a single RxNav hiccup never aborts sync.
  */
-async function buildIngredientIndex(records: { openfda?: { rxcui?: string[] } }[], rxnav: RxNavClient): Promise<IngredientIndex> {
+async function buildIngredientIndex(
+  records: { openfda?: { rxcui?: string[] } }[],
+  rxnav: RxNavClient,
+): Promise<IngredientIndex> {
   const index: IngredientIndex = new Map();
   const rxcuis = new Set<string>();
-  for (const r of records) for (const c of r.openfda?.rxcui ?? []) rxcuis.add(c);
-  for (const rxcui of rxcuis) {
-    index.set(rxcui, await rxnav.ingredientsForRxcui(rxcui));
+  for (const r of records) {
+    for (const c of r.openfda?.rxcui ?? []) rxcuis.add(c);
   }
+  await mapWithConcurrency([...rxcuis], RXNAV_CONCURRENCY, async (rxcui) => {
+    try {
+      index.set(rxcui, await rxnav.ingredientsForRxcui(rxcui));
+    } catch {
+      index.set(rxcui, []);
+    }
+  });
   return index;
 }
 
-async function upsertShortages(records: FdaShortageRecord[]): Promise<{ keys: string[]; newKeys: string[]; resolvedKeys: string[] }> {
+async function upsertShortages(
+  records: FdaShortageRecord[],
+): Promise<{ keys: string[]; newKeys: string[]; resolvedKeys: string[] }> {
+  const existingRows = await query<{
+    shortage_key: string;
+    status: string | null;
+    status_history: string | null;
+  }>(`SELECT shortage_key, status, status_history FROM shortage`);
+  const existingMap = new Map(existingRows.map((r) => [r.shortage_key, r]));
+
+  // Deduplicate within the batch by shortageKey (last wins).
+  const deduped = new Map<string, FdaShortageRecord>();
+  for (const r of records) {
+    deduped.set(shortageKey(r), r);
+  }
+
   const keys: string[] = [];
   const newKeys: string[] = [];
   const resolvedKeys: string[] = [];
-  for (const r of records) {
-    const key = shortageKey(r);
+  const nowIso = new Date().toISOString();
+
+  interface PreparedShortage {
+    key: string;
+    record: FdaShortageRecord;
+    statusHistoryJson: string | null;
+  }
+
+  const rows: PreparedShortage[] = [];
+  for (const [key, r] of deduped.entries()) {
     keys.push(key);
-    const existing = await sql.executeRaw<{ status: string }>(
-      `SELECT status FROM shortage WHERE shortage_key = '${key.replace(/'/g, "''")}'`,
-    );
-    const prev = existing.rows?.[0]?.status;
-    const esc = (s: string | undefined) => (s ?? '').replace(/'/g, "''");
-    const status = esc(r.status);
-    if (!prev) newKeys.push(key);
-    if (status === 'Resolved' && prev && prev !== 'Resolved') resolvedKeys.push(key);
-    const transition = prev && prev !== status
-      ? JSON.stringify([{ from: prev, to: status, at: new Date().toISOString() }])
-      : null;
-    await sql.executeRaw(
-      `INSERT INTO shortage (shortage_key, generic_name, status, presentation, package_ndc, dosage_form, company_name, availability, update_type, update_date, initial_posting_date, related_info, discontinued_date, openfda_json, status_history, first_seen, last_seen)
-       VALUES ('${key}', '${esc(r.generic_name)}', '${status}', '${esc(r.presentation)}', '${esc(r.package_ndc)}', '${esc(r.dosage_form)}', '${esc(r.company_name)}', '${esc(r.availability)}', '${esc(r.update_type)}', '${esc(r.update_date)}', '${esc(r.initial_posting_date)}', '${esc(r.related_info)}', '${esc(r.discontinued_date)}', '${JSON.stringify(r.openfda ?? {}).replace(/'/g, "''")}', NULL, NOW(), NOW())
-       ON DUPLICATE KEY UPDATE status = VALUES(status), last_seen = NOW(), presentation = VALUES(presentation), availability = VALUES(availability), update_date = VALUES(update_date), openfda_json = VALUES(openfda_json)`,
-    );
-    if (transition) {
-      // Append the transition into the JSON status_history array.
-      await sql.executeRaw(
-        `UPDATE shortage SET status_history = CONCAT(
-           '[', COALESCE(NULLIF(TRIM(BOTH ']' FROM status_history), ''), ''),
-           IF(status_history IS NULL OR status_history = '' OR status_history = '[]', '', ','),
-           SUBSTRING('${transition.replace(/'/g, "''")}', 2, CHAR_LENGTH('${transition.replace(/'/g, "''")}') - 2),
-           ']'
-         ) WHERE shortage_key = '${key}'`,
+    const prevRow = existingMap.get(key);
+    const prevStatus = prevRow?.status ?? null;
+    const nextStatus = r.status ?? '';
+
+    if (!prevRow) {
+      newKeys.push(key);
+    }
+    if (nextStatus === 'Resolved' && prevStatus && prevStatus !== 'Resolved') {
+      resolvedKeys.push(key);
+    }
+
+    const history = parseHistory(prevRow?.status_history);
+    if (prevStatus && prevStatus !== nextStatus) {
+      history.push({ from: prevStatus, to: nextStatus, at: nowIso });
+    }
+    const statusHistoryJson = history.length ? JSON.stringify(history) : null;
+    rows.push({ key, record: r, statusHistoryJson });
+  }
+
+  for (let i = 0; i < rows.length; i += SHORTAGE_BATCH_SIZE) {
+    const chunk = rows.slice(i, i + SHORTAGE_BATCH_SIZE);
+    const placeholders = chunk
+      .map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())')
+      .join(', ');
+    const params: unknown[] = [];
+    for (const { key, record: r, statusHistoryJson } of chunk) {
+      const category = Array.isArray(r.therapeutic_category)
+        ? r.therapeutic_category.join('; ')
+        : '';
+      params.push(
+        trunc(key, 64),
+        trunc(r.generic_name, 512),
+        trunc(r.status, 64),
+        trunc(r.presentation, 512),
+        trunc(r.package_ndc, 32),
+        trunc(r.dosage_form, 128),
+        trunc(category, 512),
+        trunc(r.company_name, 256),
+        trunc(r.availability, 128),
+        trunc(r.update_type, 64),
+        trunc(r.update_date, 32),
+        trunc(r.initial_posting_date, 32),
+        trunc(r.contact_info, 512),
+        r.related_info ?? '',
+        trunc(r.discontinued_date, 32),
+        JSON.stringify(r.openfda ?? {}),
+        statusHistoryJson,
       );
     }
+
+    await sql
+      .prepare(
+        `INSERT INTO shortage (
+           shortage_key, generic_name, status, presentation, package_ndc, dosage_form,
+           therapeutic_category, company_name, availability, update_type, update_date,
+           initial_posting_date, contact_info, related_info, discontinued_date,
+           openfda_json, status_history, first_seen, last_seen
+         ) VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE
+           generic_name = VALUES(generic_name),
+           status = VALUES(status),
+           presentation = VALUES(presentation),
+           package_ndc = VALUES(package_ndc),
+           dosage_form = VALUES(dosage_form),
+           therapeutic_category = VALUES(therapeutic_category),
+           company_name = VALUES(company_name),
+           availability = VALUES(availability),
+           update_type = VALUES(update_type),
+           update_date = VALUES(update_date),
+           initial_posting_date = VALUES(initial_posting_date),
+           contact_info = VALUES(contact_info),
+           related_info = VALUES(related_info),
+           discontinued_date = VALUES(discontinued_date),
+           openfda_json = VALUES(openfda_json),
+           status_history = VALUES(status_history),
+           last_seen = NOW()`,
+      )
+      .bindParams(...params)
+      .execute();
   }
+
   return { keys, newKeys, resolvedKeys };
 }
 
@@ -124,7 +283,13 @@ export async function runSyncJob(kind: string): Promise<void> {
   await runMigrations();
   const runId = await startSyncRun(kind);
   console.log(`[shortfall] sync run ${runId} started (kind=${kind})`);
-  const progress: SyncProgress = { fdaDone: 0, fdaTotal: 0, matched: 0, impactDone: 0, impactTotal: 0 };
+  const progress: SyncProgress = {
+    fdaDone: 0,
+    fdaTotal: 0,
+    matched: 0,
+    impactDone: 0,
+    impactTotal: 0,
+  };
   try {
     const settings = await getSettings();
     const rxnav = new RxNavClient({
@@ -150,29 +315,53 @@ export async function runSyncJob(kind: string): Promise<void> {
     // Persist matches idempotently: keep one active row per
     // (shortage_key, formulary_item_id); supersede rows no longer valid.
     const matchedKeys = new Set(matches.map((m) => m.shortageKey));
-    const active = (await sql.executeRaw<{ id: number; shortage_key: string; formulary_item_id: string }>(
+    const active = await query<{ id: number; shortage_key: string; formulary_item_id: string }>(
       `SELECT id, shortage_key, formulary_item_id FROM \`match\` WHERE superseded = 0`,
-    )).rows ?? [];
+    );
     const wanted = new Set(matches.map((m) => `${m.shortageKey}|${m.formularyItemId}`));
     const activePairs = new Set(active.map((r) => `${r.shortage_key}|${r.formulary_item_id}`));
-    const staleIds = active.filter((r) => !wanted.has(`${r.shortage_key}|${r.formulary_item_id}`)).map((r) => r.id);
-    for (const id of staleIds) {
-      await sql.executeRaw(`UPDATE \`match\` SET superseded = 1 WHERE id = ${id}`);
+    const staleIds = active
+      .filter((r) => !wanted.has(`${r.shortage_key}|${r.formulary_item_id}`))
+      .map((r) => r.id);
+
+    for (let i = 0; i < staleIds.length; i += STALE_ID_BATCH_SIZE) {
+      const chunk = staleIds.slice(i, i + STALE_ID_BATCH_SIZE);
+      const placeholders = chunk.map(() => '?').join(',');
+      await execute(`UPDATE \`match\` SET superseded = 1 WHERE id IN (${placeholders})`, chunk);
     }
+
+    const toInsert: typeof matches = [];
+    const insertedPairs = new Set(activePairs);
     for (const m of matches) {
-      if (activePairs.has(`${m.shortageKey}|${m.formularyItemId}`)) continue;
-      await sql.executeRaw(
+      const pair = `${m.shortageKey}|${m.formularyItemId}`;
+      if (insertedPairs.has(pair)) continue;
+      insertedPairs.add(pair);
+      toInsert.push(m);
+    }
+
+    for (let i = 0; i < toInsert.length; i += MATCH_BATCH_SIZE) {
+      const chunk = toInsert.slice(i, i + MATCH_BATCH_SIZE);
+      const placeholders = chunk.map(() => '(?, ?, ?, ?, NOW())').join(', ');
+      const params: unknown[] = [];
+      for (const m of chunk) {
+        params.push(
+          trunc(m.shortageKey, 64),
+          trunc(m.formularyItemId, 64),
+          trunc(m.reason, 32),
+          trunc(m.detail, 1024),
+        );
+      }
+      await execute(
         `INSERT INTO \`match\` (shortage_key, formulary_item_id, reason, detail, created_at)
-         VALUES ('${m.shortageKey}', '${m.formularyItemId}', '${m.reason}', '${m.detail.replace(/'/g, "''")}', NOW())`,
+         VALUES ${placeholders}`,
+        params,
       );
     }
 
-    const impactResult = await runImpactMapping(matchedKeys, progress, {
-      graphUserId: (await kvs.get('graphUserId')) as string | undefined,
-      cloudId: (await kvs.get('cloudId')) as string | undefined,
-    });
+    const impactResult = await runImpactMapping(matchedKeys, progress);
+    const newMatchedKeys = newKeys.filter((k) => matchedKeys.has(k));
     const responseResult = settings.autoCreateResponses
-      ? await createResponsesForNewMatches(newKeys)
+      ? await createResponsesForNewMatches(newMatchedKeys)
       : { created: 0, skipped: 'auto-create disabled' };
     const reversalResult = await openReversalTasks(resolvedKeys);
 
@@ -188,31 +377,39 @@ export async function runSyncJob(kind: string): Promise<void> {
     await updateSyncRun(runId, {
       state: 'done',
       progress,
-      result: JSON.stringify({ records: records.length, matched: matches.length, impact: impactResult }),
+      result: JSON.stringify({
+        records: records.length,
+        matched: matches.length,
+        impact: impactResult,
+      }),
     });
 
     // Evidence for `forge logs`: run summary + table counts after the run.
-    const count = async (t: string) =>
-      (await sql.executeRaw<{ n: number }>(`SELECT COUNT(*) AS n FROM ${t}`)).rows?.[0]?.n ?? 0;
-    console.log('[shortfall] EVIDENCE ' + JSON.stringify({
-      runId,
-      fdaRecords: records.length,
-      fdaLastUpdated: lastUpdated,
-      newShortages: newKeys.length,
-      resolvedNow: resolvedKeys.length,
-      matches: matches.length,
-      impact: impactResult,
-      responses: responseResult,
-      reversals: reversalResult,
-      counts: {
-        shortage: await count('shortage'),
-        formulary_item: await count('formulary_item'),
-        match: await count('\`match\`'),
-        impact_item: await count('impact_item'),
-        response: await count('response'),
-        sync_run: await count('sync_run'),
-      },
-    }));
+    const countQuery = async (sqlText: string) =>
+      (await query<{ n: number }>(sqlText))[0]?.n ?? 0;
+    console.log(
+      '[shortfall] EVIDENCE ' +
+        JSON.stringify({
+          runId,
+          fdaRecords: records.length,
+          fdaLastUpdated: lastUpdated,
+          newShortages: newKeys.length,
+          newMatchedShortages: newMatchedKeys.length,
+          resolvedNow: resolvedKeys.length,
+          matches: matches.length,
+          impact: impactResult,
+          responses: responseResult,
+          reversals: reversalResult,
+          counts: {
+            shortage: await countQuery('SELECT COUNT(*) AS n FROM shortage'),
+            formulary_item: await countQuery('SELECT COUNT(*) AS n FROM formulary_item'),
+            match: await countQuery('SELECT COUNT(*) AS n FROM `match`'),
+            impact_item: await countQuery('SELECT COUNT(*) AS n FROM impact_item'),
+            response: await countQuery('SELECT COUNT(*) AS n FROM response'),
+            sync_run: await countQuery('SELECT COUNT(*) AS n FROM sync_run'),
+          },
+        }),
+    );
   } catch (e) {
     console.log(`[shortfall] sync run ${runId} FAILED: ${String(e)}`);
     await updateSyncRun(runId, { state: 'error', result: String(e) });

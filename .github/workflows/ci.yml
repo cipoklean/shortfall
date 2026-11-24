@@ -13,13 +13,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
       - run: npm ci
+      - run: npm run ui:build
       - run: npx tsc --noEmit
       - run: npx eslint src test
       - run: npx vitest run
       - name: Validate manifest
+        if: ${{ secrets.FORGE_EMAIL != '' && secrets.FORGE_API_TOKEN != '' }}
+        env:
+          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
         run: |
           npm install -g @forge/cli@latest
           forge lint
@@ -31,10 +36,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: landing/package-lock.json
-      - run: npm ci
+          node-version: '24'
+      - name: Build landing page
         working-directory: landing
-      - run: npm run build
+        run: node build.mjs
+      - name: Verify built pages
         working-directory: landing
+        run: |
+          test -f dist/index.html
+          test -f dist/setup/index.html
+          test -f dist/privacy/index.html
+          test -f dist/support/index.html
