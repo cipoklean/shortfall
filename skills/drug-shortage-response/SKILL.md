@@ -80,12 +80,22 @@ ID, task summary, and assignee, and wait for a clear yes first.
 
 When the FDA marks a shortage resolved — or whenever a person asks which
 temporary changes still need reversing — call `get-reversal-checklist`
-(defaulting to `state: "open"`, or `state: "all"` for a full audit). Highlight
-every item flagged `reversalDue: true` (FDA status is Resolved while the
-temporary change is still open). Present a clear checklist: change ID, drug,
-shortage ID, FDA status, change description, response work item, reversal
-work item, and state. Page notices clear once the shortage resolves and
-reversals complete.
+(defaulting to pending unreversed changes, or `state: "all"` for a full
+audit). Present:
+
+1. Summary per drug (with FDA status, human status label such as **Reversal
+   in progress** or **Reversal due** — never raw enum names like
+   `reversal_open` — linked reversal Jira ticket if one exists, and the
+   linked Confluence source page; for `isSampleData: true`, note honestly
+   that it is sample hospital demonstration data with no parent Jira ticket
+   and never invent or link a placeholder key).
+2. The actionable **reversal checklist** from `item.checklist`: each step as
+   a checklist item with its owner, clickable Confluence source page link,
+   and Jira reversal ticket link (e.g. closing `PROC-404`).
+3. The clickable `openFDA record (raw data)` link and FDA Drug Shortages
+   Database link directly next to the verbatim openFDA disclaimer.
+
+Page notices clear once the shortage resolves and reversals complete.
 
 ## Guardrails
 

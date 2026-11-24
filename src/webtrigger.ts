@@ -168,7 +168,7 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
   const rovoCheck = includeRovo
     ? {
         cefazolin: await actionGetActiveShortages({ inputs: { ingredient: 'cefazolin' } }),
-        reversals: await actionGetReversalChecklist({ inputs: { state: 'open' } }),
+        reversals: await actionGetReversalChecklist({}),
       }
     : undefined;
 
