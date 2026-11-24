@@ -92,13 +92,6 @@ async function graphQuery(
       }
 
       const body = (await res.json()) as GraphBody;
-      if (body.errors?.length) {
-        return {
-          nodes: [],
-          error: `graph: ${body.errors.map((e) => e.message).join('; ').slice(0, 300)}`,
-        };
-      }
-
       const nodes: GraphNode[] = [];
       for (const v of Object.values(body.data ?? {})) {
         if (v && typeof v === 'object' && 'edges' in v) {
@@ -109,6 +102,23 @@ async function graphQuery(
           nodes.push(v as GraphNode);
         }
       }
+
+      if (body.errors?.length) {
+        // Known Teamwork Graph Preview quirk: when a Confluence page is owned/authored
+        // by a Forge app account (not an AtlassianUser), the non-null union node
+        // returns null. Skip null edges cleanly instead of failing the whole enrichment.
+        const nonAppErrors = body.errors.filter(
+          (e) => !String(e.message ?? '').includes('was declared as a non null type'),
+        );
+        if (nonAppErrors.length === 0) {
+          return { nodes };
+        }
+        return {
+          nodes,
+          error: `graph: ${nonAppErrors.map((e) => e.message).join('; ').slice(0, 300)}`,
+        };
+      }
+
       return { nodes };
     } catch (e) {
       if (isAuthTypeUnavailable(e)) {
@@ -162,8 +172,21 @@ export async function pageOwners(pageAri: string): Promise<{ nodes: GraphNode[];
 export async function pageCreator(pageAri: string): Promise<{ nodes: GraphNode[]; error?: string }> {
   const { nodes, error } = await graphQuery(
     `query shortfall_pageCreator($id: ID!) {
-      confluencePageCreator(id: $id) {
-        ... on AtlassianUser { id name }
+      confluencePageCreator(id: $id, first: 5) {
+        edges { node { ... on AtlassianUser { id name } } }
+      }
+    }`,
+    { id: pageAri },
+  );
+  return error ? { nodes, error } : { nodes };
+}
+
+/** Users who contributed to a Confluence page (curated query confluencePageContributors). */
+export async function pageContributors(pageAri: string): Promise<{ nodes: GraphNode[]; error?: string }> {
+  const { nodes, error } = await graphQuery(
+    `query shortfall_pageContributors($id: ID!) {
+      confluencePageContributors(id: $id, first: 10) {
+        edges { node { ... on AtlassianUser { id name } } }
       }
     }`,
     { id: pageAri },

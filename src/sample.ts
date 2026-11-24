@@ -58,10 +58,22 @@ interface SampleRefs {
   projectKey?: string;
 }
 
+// Order matters: dependent 2nd-hop order sets are created FIRST so that
+// direct drug protocols can link TO them via <ac:link><ri:page .../></ac:link>,
+// enabling Teamwork Graph's outgoing `confluencePageLinkedConfluencePages`
+// traversal to discover 2nd-hop blast radius immediately.
 const SAMPLE_PAGES: { title: string; body: string }[] = [
   {
+    title: 'Orthopedic arthroplasty admission order set',
+    body: `<p>Fictional sample order set for elective total hip and knee arthroplasty admissions at Sample Hospital.</p><p>Preoperative antimicrobial prophylaxis follows the institutional surgical antibiotic prophylaxis protocol prior to skin incision.</p><p>Postoperative mobilization, DVT prophylaxis, and multimodal analgesia follow standard orthopedic care pathways.</p>`,
+  },
+  {
+    title: 'ED airway escalation checklist',
+    body: `<p>Fictional sample emergency department airway escalation checklist at Sample Hospital.</p><p>Before induction, confirm backup video laryngoscopy, supraglottic airway kit, and institutional rapid sequence intubation protocol readiness.</p>`,
+  },
+  {
     title: 'Cefazolin surgical prophylaxis protocol',
-    body: `<p>Fictional sample protocol. For surgical antibiotic prophylaxis, cefazolin is the first-line agent for most procedures at Sample Hospital.</p><p>Adult dosing: cefazolin 2 g IV within 60 minutes of incision; redose every 4 hours intraoperatively.</p><p>Documented alternative per P&amp;T: clindamycin 900 mg IV or vancomycin per weight-based protocol for patients with severe beta-lactam allergy.</p>`,
+    body: `<p>Fictional sample protocol. For surgical antibiotic prophylaxis, cefazolin is the first-line agent for most procedures at Sample Hospital.</p><p>Adult dosing: cefazolin 2 g IV within 60 minutes of incision; redose every 4 hours intraoperatively.</p><p>Documented alternative per P&amp;T: clindamycin 900 mg IV or vancomycin per weight-based protocol for patients with severe beta-lactam allergy.</p><p>Dependent order sets referencing this protocol: <ac:link><ri:page ri:content-title="Orthopedic arthroplasty admission order set" /></ac:link>.</p>`,
   },
   {
     title: 'Perioperative nerve block guideline',
@@ -69,7 +81,7 @@ const SAMPLE_PAGES: { title: string; body: string }[] = [
   },
   {
     title: 'Rapid sequence intubation order set',
-    body: `<p>Fictional sample order set. RSI paralytic: rocuronium bromide 1.2 mg/kg IV is the default neuromuscular blocker. Succinylcholine is restricted to specific indications per the airway committee.</p>`,
+    body: `<p>Fictional sample order set. RSI paralytic: rocuronium bromide 1.2 mg/kg IV is the default neuromuscular blocker. Succinylcholine is restricted to specific indications per the airway committee.</p><p>Linked bedside checklist: <ac:link><ri:page ri:content-title="ED airway escalation checklist" /></ac:link>.</p>`,
   },
   {
     title: 'Local anesthetic maximum dosing quick reference',
@@ -82,10 +94,6 @@ const SAMPLE_PAGES: { title: string; body: string }[] = [
   {
     title: 'Drug shortage response log',
     body: `<p>Fictional running log of past shortage responses at Sample Hospital.</p><p><strong>2025-09 — cefazolin injection shortage:</strong> consented to conserve premixed bags to OR cases only; floor stock converted to pharmacy-compounded syringes. Restriction documented on the P&amp;T minutes page. Reversed 2025-11 when supply returned.</p><p><strong>2025-04 — lidocaine injection shortage:</strong> restricted to code carts and procedures; topical jelly substituted for bedside use.</p>`,
-  },
-  {
-    title: 'Orthopedic arthroplasty admission order set',
-    body: `<p>Fictional sample order set for elective total hip and knee arthroplasty admissions at Sample Hospital.</p><p>Preoperative antimicrobial prophylaxis: follow the <ac:link><ri:page ri:content-title="Cefazolin surgical prophylaxis protocol" /></ac:link> prior to skin incision.</p><p>Postoperative mobilization, DVT prophylaxis, and multimodal analgesia follow standard orthopedic care pathways.</p>`,
   },
 ];
 
@@ -110,12 +118,24 @@ async function getRefs(): Promise<SampleRefs> {
   };
 }
 
-async function confluenceRequest(path: Route, init: { method?: string; body?: string } = {}) {
-  return api.asApp().requestConfluence(path, {
+async function confluenceRequest(
+  path: Route,
+  init: { method?: string; body?: string; preferUser?: boolean } = {},
+) {
+  const opts = {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     method: init.method ?? 'GET',
     ...(init.body !== undefined ? { body: init.body } : {}),
-  });
+  };
+  if (init.preferUser) {
+    try {
+      const userRes = await api.asUser().requestConfluence(path, opts);
+      if (userRes.ok || userRes.status < 500) return userRes;
+    } catch {
+      // No user session (e.g. background/diagnostic call) — fall back to asApp().
+    }
+  }
+  return api.asApp().requestConfluence(path, opts);
 }
 
 async function ensureSpace(): Promise<{ key: string; id: string }> {
@@ -145,16 +165,18 @@ async function ensureSpace(): Promise<{ key: string; id: string }> {
   return { key: SPACE_KEY, id: String(created.id) };
 }
 
-async function listExistingPagesInSpace(spaceId: string): Promise<Map<string, string>> {
-  const byTitle = new Map<string, string>();
+async function listExistingPagesInSpace(
+  spaceId: string,
+): Promise<Map<string, { id: string; version: number }>> {
+  const byTitle = new Map<string, { id: string; version: number }>();
   const res = await confluenceRequest(route`/wiki/api/v2/spaces/${spaceId}/pages?limit=100`);
   if (!res.ok) return byTitle;
   const data = (await res.json()) as {
-    results?: { id: string; title: string; status?: string }[];
+    results?: { id: string; title: string; status?: string; version?: { number?: number } }[];
   };
   for (const p of data.results ?? []) {
     if (!p.status || p.status === 'current') {
-      byTitle.set(p.title, String(p.id));
+      byTitle.set(p.title, { id: String(p.id), version: Number(p.version?.number ?? 1) });
     }
   }
   return byTitle;
@@ -163,6 +185,7 @@ async function listExistingPagesInSpace(spaceId: string): Promise<Map<string, st
 async function createPage(spaceId: string, title: string, body: string): Promise<string> {
   const res = await confluenceRequest(route`/wiki/api/v2/pages`, {
     method: 'POST',
+    preferUser: true,
     body: JSON.stringify({
       spaceId,
       status: 'current',
@@ -173,6 +196,27 @@ async function createPage(spaceId: string, title: string, body: string): Promise
   if (!res.ok) throw new Error(`page create failed: HTTP ${res.status} ${await res.text()}`);
   const page = (await res.json()) as { id: string };
   return page.id;
+}
+
+async function updatePage(
+  pageId: string,
+  version: number,
+  title: string,
+  body: string,
+): Promise<string> {
+  const res = await confluenceRequest(route`/wiki/api/v2/pages/${pageId}`, {
+    method: 'PUT',
+    preferUser: true,
+    body: JSON.stringify({
+      id: pageId,
+      status: 'current',
+      title,
+      body: { representation: 'storage', value: body },
+      version: { number: version + 1, message: 'Shortfall sample protocol update' },
+    }),
+  });
+  if (!res.ok) throw new Error(`page update failed: HTTP ${res.status} ${await res.text()}`);
+  return pageId;
 }
 
 async function insertFormularyItem(item: FormularyItem): Promise<void> {
@@ -323,8 +367,10 @@ export async function loadSampleHospital(): Promise<{
   const existingPages = await listExistingPagesInSpace(space.id);
   for (const page of SAMPLE_PAGES) {
     try {
-      const existingId = existingPages.get(page.title);
-      const id = existingId ?? (await createPage(space.id, page.title, page.body));
+      const existing = existingPages.get(page.title);
+      const id = existing
+        ? await updatePage(existing.id, existing.version, page.title, page.body)
+        : await createPage(space.id, page.title, page.body);
       if (!refs.pageIds.includes(id)) refs.pageIds.push(id);
     } catch (e) {
       warnings.push(`page "${page.title}": ${String(e)}`);

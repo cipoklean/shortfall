@@ -4,7 +4,7 @@ import { kvs } from '@forge/kvs';
 import { runMigrations, query, execute } from './storage/schema';
 import { getSettings, saveSettings, AppSettings } from './settings';
 import { enqueueSync } from './sync';
-import { probeGraph, pageOwners, pageCreator, userTeams, linkedPages } from './graph';
+import { probeGraph, pageOwners, pageCreator, pageContributors, userTeams, linkedPages } from './graph';
 import { FormularyItem, OPENFDA_DISCLAIMER } from './types';
 import {
   normalizeDrugName,
@@ -942,7 +942,7 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
       ? `ari:cloud:confluence:${cloudId}:page/${refId}`
       : `ari:cloud:confluence::page/${refId}`;
 
-    // 1. Page owners (fallback to page creator).
+    // 1. Page owners -> creator -> contributors (Teamwork Graph) with REST v2 ownerId fallback.
     const ownersRes = await pageOwners(pageAri);
     if (ownersRes.error) missing.push(ownersRes.error);
     let ownerNodes = ownersRes.nodes;
@@ -951,13 +951,54 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
       if (creatorRes.error) missing.push(creatorRes.error);
       ownerNodes = creatorRes.nodes;
     }
+    if (!ownerNodes.length) {
+      const contribRes = await pageContributors(pageAri);
+      if (contribRes.error) missing.push(contribRes.error);
+      ownerNodes = contribRes.nodes;
+    }
 
-    const ownerName = ownerNodes
+    let ownerName = ownerNodes
       .map((n) => n.name ?? n.displayName ?? '')
       .filter(Boolean)
       .join(', ');
-    const ownerUserAri = ownerNodes[0]?.id;
-    const ownerAccountId = ownerUserAri ? ownerUserAri.split('/').pop() ?? '' : '';
+    let ownerUserAri = ownerNodes[0]?.id;
+    let ownerAccountId = ownerUserAri ? ownerUserAri.split('/').pop() ?? '' : '';
+
+    // Fallback: Confluence REST v2 page metadata (handles app-created pages where TWG omits non-AtlassianUser nodes).
+    if (!ownerName) {
+      try {
+        const pageRes = await api
+          .asUser()
+          .requestConfluence(route`/wiki/api/v2/pages/${refId}`, {
+            headers: { Accept: 'application/json' },
+          });
+        if (pageRes.ok) {
+          const pageData = (await pageRes.json()) as { ownerId?: string; authorId?: string };
+          const restOwnerId = pageData.ownerId ?? pageData.authorId;
+          if (restOwnerId) {
+            const userRes = await api
+              .asUser()
+              .requestConfluence(route`/wiki/rest/api/user?accountId=${restOwnerId}`, {
+                headers: { Accept: 'application/json' },
+              });
+            if (userRes.ok) {
+              const userData = (await userRes.json()) as {
+                displayName?: string;
+                publicName?: string;
+                accountType?: string;
+              };
+              if (userData.accountType !== 'app') {
+                ownerName = userData.displayName ?? userData.publicName ?? '';
+                ownerAccountId = restOwnerId;
+                ownerUserAri = `ari:cloud:identity::user/${restOwnerId}`;
+              }
+            }
+          }
+        }
+      } catch {
+        // Best-effort REST fallback.
+      }
+    }
 
     if (ownerName || ownerAccountId) {
       await execute(
