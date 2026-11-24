@@ -1,7 +1,13 @@
 import Resolver from '@forge/resolver';
 import api, { route } from '@forge/api';
 import { kvs } from '@forge/kvs';
-import { runMigrations, query, execute } from './storage/schema';
+import {
+  runMigrations,
+  query,
+  execute,
+  resetSqlStatementCount,
+  getSqlStatementCount,
+} from './storage/schema';
 import { getSettings, saveSettings, AppSettings } from './settings';
 import { enqueueSync } from './sync';
 import { probeGraph, pageOwners, pageCreator, pageContributors, userTeams, linkedPages } from './graph';
@@ -15,6 +21,7 @@ import {
 } from './match';
 import {
   createResponseForShortage,
+  createOwnerTasksForResponse,
   recordTemporaryChange,
   markTemporaryChangeReversed,
   openReversalTasksForResolvedResponses,
@@ -109,7 +116,7 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-/** Shared KPI computation used by both the dashboard resolver and diagnostic report. */
+/** Shared KPI computation using 2-3 aggregate SQL queries instead of one per KPI. */
 export async function computeDashboardMetrics() {
   const settings = await getSettings();
   const clinicalSpaces = settings.clinicalSpaceKeys.filter(Boolean);
@@ -126,154 +133,105 @@ export async function computeDashboardMetrics() {
   }
   if (clinicalSpaces.length > 0) {
     const ph = clinicalSpaces.map(() => '?').join(',');
-    impactWhereParts.push(`(kind != 'page' OR space_key IS NULL OR space_key = '' OR space_key IN (${ph}))`);
+    impactWhereParts.push(
+      `(kind != 'page' OR space_key IS NULL OR space_key = '' OR space_key IN (${ph}))`,
+    );
     impactParams.push(...clinicalSpaces);
   }
   const impactWhere = impactWhereParts.join(' AND ');
 
-  const [
-    activeRows,
-    discontinuedRows,
-    resolvedRows,
-    formularyRows,
-    impactRows,
-    directImpactRows,
-    linkedImpactRows,
-    openResponseRows,
-    openTempRows,
-    reversalsDueRows,
-    pageExposureRows,
-    jiraExposureRows,
-    timingRows,
-  ] = await Promise.all([
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT s.shortage_key) AS n
-       FROM shortage s
-       JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0
-       WHERE s.status = 'Current'`,
-    ),
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT s.shortage_key) AS n
-       FROM shortage s
-       JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0
-       WHERE s.status = 'To Be Discontinued'`,
-    ),
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT s.shortage_key) AS n
-       FROM shortage s
-       JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0
-       WHERE s.status = 'Resolved'`,
-    ),
-    query<{ n: number }>(`SELECT COUNT(*) AS n FROM formulary_item WHERE active = 1`),
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS n
-       FROM impact_item
-       WHERE ${impactWhere}`,
-      impactParams,
-    ),
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS n
-       FROM impact_item
-       WHERE ${impactWhere} AND COALESCE(hop, 1) = 1`,
-      impactParams,
-    ),
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS n
-       FROM impact_item
-       WHERE ${impactWhere} AND hop = 2`,
-      impactParams,
-    ),
-    query<{ n: number }>(
-      `SELECT COUNT(DISTINCT r.jira_issue_key) AS n
-       FROM response r
-       LEFT JOIN shortage s ON s.shortage_key = r.shortage_key
-       WHERE COALESCE(r.state, 'open') = 'open'
-         AND r.jira_issue_key IS NOT NULL
-         AND r.jira_issue_key NOT LIKE 'SAMPLE-%'
-         AND r.jira_issue_key NOT LIKE 'HIST-%'
-         AND COALESCE(s.status, 'Current') != 'Resolved'`,
-    ),
-    query<{ n: number }>(`SELECT COUNT(*) AS n FROM temporary_change WHERE state IN ('open', 'reversal_open')`),
-    query<{ n: number }>(
-      `SELECT COUNT(*) AS n
-       FROM temporary_change tc
-       JOIN response r ON r.id = tc.response_id
-       JOIN shortage s ON s.shortage_key = r.shortage_key
-       WHERE s.status = 'Resolved' AND tc.state = 'open'`,
-    ),
+  // 1. Single aggregate query for ALL 10 scalar KPIs (replaces 10 separate queries).
+  const scalarSql = `SELECT
+    (SELECT COUNT(DISTINCT s.shortage_key) FROM shortage s JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0 WHERE s.status = 'Current') AS activeMatched,
+    (SELECT COUNT(DISTINCT s.shortage_key) FROM shortage s JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0 WHERE s.status = 'To Be Discontinued') AS discontinuedMatched,
+    (SELECT COUNT(DISTINCT s.shortage_key) FROM shortage s JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0 WHERE s.status = 'Resolved') AS resolvedMatched,
+    (SELECT COUNT(*) FROM formulary_item WHERE active = 1) AS formularyCount,
+    (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere}) AS impactItems,
+    (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere} AND COALESCE(hop, 1) = 1) AS directImpactItems,
+    (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere} AND hop = 2) AS linkedImpactItems,
+    (SELECT COUNT(DISTINCT r.jira_issue_key) FROM response r LEFT JOIN shortage s ON s.shortage_key = r.shortage_key WHERE COALESCE(r.state, 'open') = 'open' AND r.jira_issue_key IS NOT NULL AND r.jira_issue_key NOT LIKE 'SAMPLE-%' AND r.jira_issue_key NOT LIKE 'HIST-%' AND COALESCE(s.status, 'Current') != 'Resolved') AS openResponses,
+    (SELECT COUNT(*) FROM temporary_change WHERE state IN ('open', 'reversal_open')) AS openTemporaryChanges,
+    (SELECT COUNT(*) FROM temporary_change tc JOIN response r ON r.id = tc.response_id JOIN shortage s ON s.shortage_key = r.shortage_key WHERE s.status = 'Resolved' AND tc.state = 'open') AS reversalsDue`;
+  const scalarParams = [...impactParams, ...impactParams, ...impactParams];
+
+  // 2. Single combined exposure query (clinical Confluence spaces + non-response Jira projects).
+  const pageSpaceFilter =
     clinicalSpaces.length > 0
-      ? query<{ spaceKey: string; count: number }>(
-          `SELECT space_key AS spaceKey, COUNT(DISTINCT ref_id) AS count
-           FROM impact_item
-           WHERE kind = 'page' AND space_key IN (${clinicalSpaces.map(() => '?').join(',')})
-           GROUP BY space_key
-           ORDER BY count DESC`,
-          clinicalSpaces,
-        )
-      : query<{ spaceKey: string; count: number }>(
-          `SELECT space_key AS spaceKey, COUNT(DISTINCT ref_id) AS count
-           FROM impact_item
-           WHERE kind = 'page' AND space_key IS NOT NULL AND space_key != ''
-           GROUP BY space_key
-           ORDER BY count DESC`,
-        ),
-    query<{ projectKey: string; count: number }>(
-      `SELECT SUBSTRING_INDEX(ref_id, '-', 1) AS projectKey, COUNT(DISTINCT ref_id) AS count
-       FROM impact_item
-       WHERE kind = 'jira'
-         AND title NOT LIKE '[Shortage]%'
-         AND title NOT LIKE '[Owner Review]%'
-         AND title NOT LIKE '[Reversal]%'
-         ${respProj ? 'AND ref_id NOT LIKE ?' : ''}
-       GROUP BY SUBSTRING_INDEX(ref_id, '-', 1)
-       ORDER BY count DESC`,
-      respProj ? [`${respProj}-%`] : [],
-    ),
-    query<{ opened_at: string | Date | null; initial_posting_date: string | null }>(
+      ? `space_key IN (${clinicalSpaces.map(() => '?').join(',')})`
+      : `space_key IS NOT NULL AND space_key != ''`;
+  const exposureSql = `
+    SELECT space_key AS spaceKey, COUNT(DISTINCT ref_id) AS count, 'space' AS kind
+    FROM impact_item
+    WHERE kind = 'page' AND ${pageSpaceFilter}
+    GROUP BY space_key
+    UNION ALL
+    SELECT CONCAT('Jira: ', SUBSTRING_INDEX(ref_id, '-', 1)) AS spaceKey, COUNT(DISTINCT ref_id) AS count, 'jira' AS kind
+    FROM impact_item
+    WHERE kind = 'jira'
+      AND title NOT LIKE '[Shortage]%'
+      AND title NOT LIKE '[Owner Review]%'
+      AND title NOT LIKE '[Reversal]%'
+      ${respProj ? 'AND ref_id NOT LIKE ?' : ''}
+    GROUP BY CONCAT('Jira: ', SUBSTRING_INDEX(ref_id, '-', 1))
+    ORDER BY count DESC`;
+  const exposureParams: unknown[] = [
+    ...clinicalSpaces,
+    ...(respProj ? [`${respProj}-%`] : []),
+  ];
+
+  const [scalarRows, exposureRows] = await Promise.all([
+    query<{
+      activeMatched: number;
+      discontinuedMatched: number;
+      resolvedMatched: number;
+      formularyCount: number;
+      impactItems: number;
+      directImpactItems: number;
+      linkedImpactItems: number;
+      openResponses: number;
+      openTemporaryChanges: number;
+      reversalsDue: number;
+    }>(scalarSql, scalarParams),
+    query<{ spaceKey: string; count: number; kind: 'space' | 'jira' }>(exposureSql, exposureParams),
+  ]);
+
+  const s = scalarRows[0];
+  const openResponses = Number(s?.openResponses ?? 0);
+
+  // 3. Only run response-timing query when open responses exist.
+  let medianResponseHours: number | null = null;
+  if (openResponses > 0) {
+    const timingRows = await query<{
+      opened_at: string | Date | null;
+      initial_posting_date: string | null;
+    }>(
       `SELECT r.opened_at, s.initial_posting_date
        FROM response r
        JOIN shortage s ON s.shortage_key = r.shortage_key
        WHERE r.opened_at IS NOT NULL
          AND s.initial_posting_date IS NOT NULL
          AND r.jira_issue_key NOT LIKE 'SAMPLE-%'`,
-    ),
-  ]);
-
-  const hours: number[] = [];
-  for (const row of timingRows) {
-    const opened = parseDateMs(row.opened_at);
-    const posted = parseDateMs(row.initial_posting_date);
-    if (opened !== null && posted !== null) {
-      const diff = (opened - posted) / 3_600_000;
-      if (Number.isFinite(diff) && diff >= 0) hours.push(diff);
+    );
+    const hours: number[] = [];
+    for (const row of timingRows) {
+      const opened = parseDateMs(row.opened_at);
+      const posted = parseDateMs(row.initial_posting_date);
+      if (opened !== null && posted !== null) {
+        const diff = (opened - posted) / 3_600_000;
+        if (Number.isFinite(diff) && diff >= 0) hours.push(diff);
+      }
+    }
+    hours.sort((a, b) => a - b);
+    if (hours.length > 0) {
+      const mid = Math.floor(hours.length / 2);
+      const med = hours.length % 2 === 1 ? hours[mid] : (hours[mid - 1] + hours[mid]) / 2;
+      medianResponseHours = Math.round(med * 10) / 10;
     }
   }
-  hours.sort((a, b) => a - b);
-  let medianResponseHours: number | null = null;
-  if (hours.length > 0) {
-    const mid = Math.floor(hours.length / 2);
-    const med = hours.length % 2 === 1 ? hours[mid] : (hours[mid - 1] + hours[mid]) / 2;
-    medianResponseHours = Math.round(med * 10) / 10;
-  }
 
-  const activeMatched = Number(activeRows[0]?.n ?? 0);
-  const discontinuedMatched = Number(discontinuedRows[0]?.n ?? 0);
-  const resolvedMatched = Number(resolvedRows[0]?.n ?? 0);
-
-  const exposureBySpace: { spaceKey: string; count: number; kind?: 'space' | 'jira' }[] = [
-    ...pageExposureRows.map((r) => ({
-      spaceKey: r.spaceKey,
-      count: Number(r.count ?? 0),
-      kind: 'space' as const,
-    })),
-    ...jiraExposureRows
-      .filter((r) => r.projectKey && Number(r.count ?? 0) > 0)
-      .map((r) => ({
-        spaceKey: `Jira: ${r.projectKey}`,
-        count: Number(r.count ?? 0),
-        kind: 'jira' as const,
-      })),
-  ];
+  const activeMatched = Number(s?.activeMatched ?? 0);
+  const discontinuedMatched = Number(s?.discontinuedMatched ?? 0);
+  const resolvedMatched = Number(s?.resolvedMatched ?? 0);
 
   return {
     settings,
@@ -281,28 +239,59 @@ export async function computeDashboardMetrics() {
     discontinuedMatched,
     resolvedMatched,
     totalMatched: activeMatched + discontinuedMatched + resolvedMatched,
-    formularyCount: Number(formularyRows[0]?.n ?? 0),
-    impactItems: Number(impactRows[0]?.n ?? 0),
-    directImpactItems: Number(directImpactRows[0]?.n ?? 0),
-    linkedImpactItems: Number(linkedImpactRows[0]?.n ?? 0),
-    openResponses: Number(openResponseRows[0]?.n ?? 0),
-    openTemporaryChanges: Number(openTempRows[0]?.n ?? 0),
-    reversalsDue: Number(reversalsDueRows[0]?.n ?? 0),
-    exposureBySpace,
+    formularyCount: Number(s?.formularyCount ?? 0),
+    impactItems: Number(s?.impactItems ?? 0),
+    directImpactItems: Number(s?.directImpactItems ?? 0),
+    linkedImpactItems: Number(s?.linkedImpactItems ?? 0),
+    openResponses,
+    openTemporaryChanges: Number(s?.openTemporaryChanges ?? 0),
+    reversalsDue: Number(s?.reversalsDue ?? 0),
+    exposureBySpace: exposureRows
+      .filter((r) => r.spaceKey && Number(r.count ?? 0) > 0)
+      .map((r) => ({
+        spaceKey: r.spaceKey,
+        count: Number(r.count ?? 0),
+        kind: r.kind,
+      })),
     medianResponseHours,
   };
 }
 
-/** Dashboard: last sync result, headline counts, exposure by space, and response telemetry. */
+/** Dashboard: last sync result, headline counts, exposure by space, syncLog & latest run in one round-trip. */
 resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }) => {
+  resetSqlStatementCount();
   const siteUrl = await getSiteUrl(context);
   await runMigrations();
 
-  const [lastSync, graph, metrics] = await Promise.all([
+  const [lastSync, graph, metrics, syncLog] = await Promise.all([
     kvs.get('lastSync'),
     probeGraph(),
     computeDashboardMetrics(),
+    query<{
+      id: number;
+      kind: string;
+      state: string;
+      progress: string | null;
+      started_at: string;
+      finished_at: string | null;
+      result: string | null;
+    }>(
+      `SELECT id, kind, state, progress, started_at, finished_at, result
+       FROM sync_run
+       ORDER BY started_at DESC, id DESC
+       LIMIT 10`,
+    ),
   ]);
+
+  const latest = syncLog[0];
+  const latestSyncProgress = latest
+    ? {
+        state: latest.state,
+        progress: safeJsonParse(latest.progress, null),
+        startedAt: latest.started_at,
+        result: latest.result,
+      }
+    : { state: 'none' };
 
   return {
     lastSync: lastSync ?? null,
@@ -322,6 +311,9 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
     settings: metrics.settings,
     setupComplete: metrics.settings.setupComplete,
     autoCreateResponses: metrics.settings.autoCreateResponses,
+    syncLog,
+    latestSyncProgress,
+    sqlStatements: getSqlStatementCount(),
     reducedMode: [
       ...graph.missingScopes,
       ...(graph.note && !graph.available ? [graph.note] : []),
@@ -720,6 +712,17 @@ resolver.define(
   },
 );
 
+/** Create missing [Owner Review] Jira tasks (with real Relates links) for an existing open response. */
+resolver.define(
+  'createOwnerTasks',
+  async ({ payload }: { payload: { shortageKey?: string; shortageId?: string } }) => {
+    await runMigrations();
+    const key = payload?.shortageKey ?? payload?.shortageId;
+    if (!key) throw new Error('shortageKey is required');
+    return createOwnerTasksForResponse(key, { asUser: true });
+  },
+);
+
 /** Record a temporary protocol/order-set change against an active response. */
 resolver.define(
   'addTemporaryChange',
@@ -1010,40 +1013,94 @@ resolver.define(
 );
 
 /**
- * Foreground Teamwork Graph enrichment: fill owners, teams, and 2nd-hop
+ * Resolve a Confluence accountId to a human Atlassian user, returning null if
+ * the account is an app/bot (e.g. Shortfall's own app account).
+ */
+async function resolveHumanConfluenceUser(
+  accountId: string,
+  cache: Map<string, { name: string; accountId: string } | null>,
+): Promise<{ name: string; accountId: string } | null> {
+  if (!accountId) return null;
+  if (cache.has(accountId)) return cache.get(accountId) ?? null;
+  try {
+    const userRes = await api
+      .asUser()
+      .requestConfluence(route`/wiki/rest/api/user?accountId=${accountId}`, {
+        headers: { Accept: 'application/json' },
+      });
+    if (userRes.ok) {
+      const userData = (await userRes.json()) as {
+        displayName?: string;
+        publicName?: string;
+        accountType?: string;
+      };
+      const name = (userData.displayName ?? userData.publicName ?? '').trim();
+      if (userData.accountType !== 'app' && name && name.toLowerCase() !== 'shortfall') {
+        const hit = { name, accountId };
+        cache.set(accountId, hit);
+        return hit;
+      }
+    }
+  } catch {
+    // Ignore lookup failure.
+  }
+  cache.set(accountId, null);
+  return null;
+}
+
+/**
+ * Foreground Teamwork Graph enrichment: fill human owners, teams, and 2nd-hop
  * linked Confluence pages on impact items using the calling user's context.
+ * Batches 2nd-hop inserts and skips unchanged owner/team UPDATEs to keep SQL minimal.
  */
 resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) => {
+  resetSqlStatementCount();
   const captured = await captureContext(context);
   await runMigrations();
   const cloudId = captured.cloudId ?? ((await kvs.get('cloudId')) as string | undefined);
 
-  const [directRows, existingRows] = await Promise.all([
-    query<{
-      id: number;
-      shortage_key: string;
-      ref_id: string;
-      space_key: string | null;
-    }>(
-      `SELECT id, shortage_key, ref_id, space_key
-       FROM impact_item
-       WHERE kind = 'page' AND COALESCE(hop, 1) = 1`,
-    ),
-    query<{ shortage_key: string; kind: string; ref_id: string }>(
-      `SELECT shortage_key, kind, ref_id FROM impact_item`,
-    ),
-  ]);
-
-  const existingSet = new Set(
-    existingRows.map((r) => `${r.shortage_key}|${r.kind}|${r.ref_id}`),
+  // Single SELECT loads all impact_item rows for both direct-page grouping and deduping.
+  const allImpactRows = await query<{
+    shortage_key: string;
+    kind: string;
+    ref_id: string;
+    space_key: string | null;
+    hop: number | null;
+    owner_name: string | null;
+    owner_account_id: string | null;
+    team_name: string | null;
+  }>(
+    `SELECT shortage_key, kind, ref_id, space_key, COALESCE(hop, 1) AS hop,
+            owner_name, owner_account_id, team_name
+     FROM impact_item`,
   );
 
-  // Deduplicate direct Confluence pages by ref_id while retaining every shortage_key they touch.
-  const pageGroups = new Map<string, { shortageKeys: Set<string>; spaceKey: string | null }>();
-  for (const row of directRows) {
+  const existingSet = new Set(
+    allImpactRows.map((r) => `${r.shortage_key}|${r.kind}|${r.ref_id}`),
+  );
+
+  const pageGroups = new Map<
+    string,
+    {
+      shortageKeys: Set<string>;
+      spaceKey: string | null;
+      existingOwnerName: string;
+      existingOwnerAcct: string;
+      existingTeamName: string;
+    }
+  >();
+  for (const row of allImpactRows) {
+    if (row.kind !== 'page' || Number(row.hop ?? 1) !== 1) continue;
     let group = pageGroups.get(row.ref_id);
     if (!group) {
-      group = { shortageKeys: new Set<string>(), spaceKey: row.space_key };
+      const existingOwner = (row.owner_name ?? '').trim();
+      group = {
+        shortageKeys: new Set<string>(),
+        spaceKey: row.space_key,
+        existingOwnerName: existingOwner.toLowerCase() === 'shortfall' ? '' : existingOwner,
+        existingOwnerAcct: (row.owner_account_id ?? '').trim(),
+        existingTeamName: (row.team_name ?? '').trim(),
+      };
       pageGroups.set(row.ref_id, group);
     }
     group.shortageKeys.add(row.shortage_key);
@@ -1053,25 +1110,41 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
   let enrichedOwners = 0;
   let discoveredLinkedPages = 0;
   const missing: string[] = [];
+  const userCache = new Map<string, { name: string; accountId: string } | null>();
+  const pendingLinkedRows: {
+    shortageKey: string;
+    refId: string;
+    title: string;
+    url: string;
+    spaceKey: string;
+    detail: string;
+  }[] = [];
 
   for (const [refId, group] of pageGroups.entries()) {
     const pageAri = cloudId
       ? `ari:cloud:confluence:${cloudId}:page/${refId}`
       : `ari:cloud:confluence::page/${refId}`;
 
-    // 1. Page owners -> creator -> contributors (Teamwork Graph) with REST v2 ownerId fallback.
+    // 1. Human owner: TWG pageOwners -> pageCreator -> pageContributors -> Confluence REST v2
+    //    (ownerId -> authorId -> version.authorId -> page version history). Never accept app accounts.
     const ownersRes = await pageOwners(pageAri);
     if (ownersRes.error) missing.push(ownersRes.error);
-    let ownerNodes = ownersRes.nodes;
+    let ownerNodes = ownersRes.nodes.filter(
+      (n) => (n.name ?? n.displayName ?? '').trim().toLowerCase() !== 'shortfall',
+    );
     if (!ownerNodes.length) {
       const creatorRes = await pageCreator(pageAri);
       if (creatorRes.error) missing.push(creatorRes.error);
-      ownerNodes = creatorRes.nodes;
+      ownerNodes = creatorRes.nodes.filter(
+        (n) => (n.name ?? n.displayName ?? '').trim().toLowerCase() !== 'shortfall',
+      );
     }
     if (!ownerNodes.length) {
       const contribRes = await pageContributors(pageAri);
       if (contribRes.error) missing.push(contribRes.error);
-      ownerNodes = contribRes.nodes;
+      ownerNodes = contribRes.nodes.filter(
+        (n) => (n.name ?? n.displayName ?? '').trim().toLowerCase() !== 'shortfall',
+      );
     }
 
     let ownerName = ownerNodes
@@ -1081,7 +1154,8 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
     let ownerUserAri = ownerNodes[0]?.id;
     let ownerAccountId = ownerUserAri ? ownerUserAri.split('/').pop() ?? '' : '';
 
-    // Fallback: Confluence REST v2 page metadata (handles app-created pages where TWG omits non-AtlassianUser nodes).
+    // Confluence REST v2 fallback: checks ownerId, authorId, latest editor (version.authorId),
+    // and recent version history to find a real human contributor on app-created pages.
     if (!ownerName) {
       try {
         const pageRes = await api
@@ -1090,24 +1164,46 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
             headers: { Accept: 'application/json' },
           });
         if (pageRes.ok) {
-          const pageData = (await pageRes.json()) as { ownerId?: string; authorId?: string };
-          const restOwnerId = pageData.ownerId ?? pageData.authorId;
-          if (restOwnerId) {
-            const userRes = await api
+          const pageData = (await pageRes.json()) as {
+            ownerId?: string;
+            authorId?: string;
+            version?: { authorId?: string };
+          };
+          const candidates = [
+            pageData.ownerId,
+            pageData.authorId,
+            pageData.version?.authorId,
+          ].filter((id): id is string => Boolean(id));
+
+          for (const candidateId of [...new Set(candidates)]) {
+            const human = await resolveHumanConfluenceUser(candidateId, userCache);
+            if (human) {
+              ownerName = human.name;
+              ownerAccountId = human.accountId;
+              ownerUserAri = `ari:cloud:identity::user/${human.accountId}`;
+              break;
+            }
+          }
+
+          if (!ownerName) {
+            const verRes = await api
               .asUser()
-              .requestConfluence(route`/wiki/rest/api/user?accountId=${restOwnerId}`, {
+              .requestConfluence(route`/wiki/api/v2/pages/${refId}/versions?limit=10`, {
                 headers: { Accept: 'application/json' },
               });
-            if (userRes.ok) {
-              const userData = (await userRes.json()) as {
-                displayName?: string;
-                publicName?: string;
-                accountType?: string;
+            if (verRes.ok) {
+              const verBody = (await verRes.json()) as {
+                results?: { authorId?: string }[];
               };
-              if (userData.accountType !== 'app') {
-                ownerName = userData.displayName ?? userData.publicName ?? '';
-                ownerAccountId = restOwnerId;
-                ownerUserAri = `ari:cloud:identity::user/${restOwnerId}`;
+              for (const v of verBody.results ?? []) {
+                if (!v.authorId) continue;
+                const human = await resolveHumanConfluenceUser(v.authorId, userCache);
+                if (human) {
+                  ownerName = human.name;
+                  ownerAccountId = human.accountId;
+                  ownerUserAri = `ari:cloud:identity::user/${human.accountId}`;
+                  break;
+                }
               }
             }
           }
@@ -1117,36 +1213,37 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
       }
     }
 
-    if (ownerName || ownerAccountId) {
-      await execute(
-        `UPDATE impact_item
-         SET owner_name = COALESCE(NULLIF(?, ''), owner_name),
-             owner_account_id = COALESCE(NULLIF(?, ''), owner_account_id)
-         WHERE kind = 'page' AND ref_id = ?`,
-        [ownerName, ownerAccountId, refId],
-      );
-      enrichedOwners++;
-    }
-
-    // 2. Teams for the page owner.
+    // 2. Teams for the resolved human owner via Teamwork Graph.
+    let teamName = '';
     if (ownerUserAri) {
       const teamsRes = await userTeams(ownerUserAri);
       if (teamsRes.error) missing.push(teamsRes.error);
-      const teamName = teamsRes.nodes
+      teamName = teamsRes.nodes
         .map((n) => n.name ?? n.displayName ?? '')
         .filter(Boolean)
         .join(', ');
-      if (teamName) {
-        await execute(
-          `UPDATE impact_item
-           SET team_name = ?
-           WHERE kind = 'page' AND ref_id = ?`,
-          [teamName, refId],
-        );
-      }
     }
 
-    // 3. 2nd-hop Teamwork Graph linked Confluence pages.
+    // Single combined UPDATE per page ONLY when owner or team actually changed.
+    const ownerChanged =
+      Boolean(ownerName || ownerAccountId) &&
+      (ownerName !== group.existingOwnerName || ownerAccountId !== group.existingOwnerAcct);
+    const teamChanged = Boolean(teamName) && teamName !== group.existingTeamName;
+    if (ownerChanged || teamChanged) {
+      await execute(
+        `UPDATE impact_item
+         SET owner_name = COALESCE(NULLIF(?, ''), owner_name),
+             owner_account_id = COALESCE(NULLIF(?, ''), owner_account_id),
+             team_name = COALESCE(NULLIF(?, ''), team_name)
+         WHERE kind = 'page' AND ref_id = ?`,
+        [ownerName, ownerAccountId, teamName, refId],
+      );
+    }
+    if (ownerName || ownerAccountId) {
+      enrichedOwners++;
+    }
+
+    // 3. 2nd-hop Teamwork Graph linked Confluence pages (collected for batch INSERT).
     const linkedRes = await linkedPages(pageAri);
     if (linkedRes.error) missing.push(linkedRes.error);
     for (const node of linkedRes.nodes) {
@@ -1171,28 +1268,42 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
         const dedupeKey = `${shortageKey}|page|${linkedPageId}`;
         if (existingSet.has(dedupeKey)) continue;
         existingSet.add(dedupeKey);
-
-        await execute(
-          `INSERT INTO impact_item
-             (shortage_key, kind, ref_id, title, url, found_via, hop, space_key, detail, created_at)
-           VALUES (?, 'page', ?, ?, ?, 'teamwork-graph-link', 2, ?, ?, NOW())`,
-          [
-            shortageKey,
-            linkedPageId,
-            title,
-            rawUrl,
-            spaceKey,
-            `Linked via Teamwork Graph from page ${refId}`,
-          ],
-        );
+        pendingLinkedRows.push({
+          shortageKey,
+          refId: linkedPageId,
+          title,
+          url: rawUrl,
+          spaceKey,
+          detail: `Linked via Teamwork Graph from page ${refId}`,
+        });
         discoveredLinkedPages++;
       }
     }
   }
 
+  // Batch INSERT all discovered 2nd-hop rows in chunks of 40 (replaces 30+ individual INSERTs).
+  const CHUNK = 40;
+  for (let i = 0; i < pendingLinkedRows.length; i += CHUNK) {
+    const chunk = pendingLinkedRows.slice(i, i + CHUNK);
+    const placeholders = chunk
+      .map(() => `(?, 'page', ?, ?, ?, 'teamwork-graph-link', 2, ?, ?, NOW())`)
+      .join(', ');
+    const params: unknown[] = [];
+    for (const r of chunk) {
+      params.push(r.shortageKey, r.refId, r.title, r.url, r.spaceKey, r.detail);
+    }
+    await execute(
+      `INSERT INTO impact_item
+         (shortage_key, kind, ref_id, title, url, found_via, hop, space_key, detail, created_at)
+       VALUES ${placeholders}`,
+      params,
+    );
+  }
+
   return {
     enrichedOwners,
     discoveredLinkedPages,
+    sqlStatements: getSqlStatementCount(),
     missing: [...new Set(missing)].slice(0, 15),
   };
 });

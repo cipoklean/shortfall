@@ -403,8 +403,8 @@ describe('matchShortages', () => {
       item({ id: 'sample-bumetanide', displayName: 'bumetanide injection', ingredientNames: ['bumetanide'], ingredientRxcuis: ['1808'], packageNdcs: ['72205010207'], dosageForms: ['injection'] }),
       item({ id: 'sample-furosemide-tab', displayName: 'furosemide 40 mg tablet', ingredientNames: ['furosemide'], ingredientRxcuis: ['4603'], packageNdcs: [], dosageForms: ['tablet'] }),
       item({ id: 'sample-acetaminophen', displayName: 'acetaminophen 500 mg tablet', ingredientNames: ['acetaminophen'], ingredientRxcuis: ['161'], packageNdcs: [], dosageForms: ['tablet'] }),
-      item({ id: 'sample-insulin-glargine', displayName: 'insulin glargine 100 units/mL injection', ingredientNames: ['insulin glargine'], ingredientRxcuis: ['274783'], packageNdcs: [], dosageForms: ['injection'] }),
-      item({ id: 'sample-metformin', displayName: 'metformin 500 mg tablet', ingredientNames: ['metformin'], ingredientRxcuis: ['6809'], packageNdcs: [], dosageForms: ['tablet'] }),
+      item({ id: 'sample-ondansetron', displayName: 'ondansetron 4 mg/2 mL injection', ingredientNames: ['ondansetron'], ingredientRxcuis: ['26225'], packageNdcs: [], dosageForms: ['injection'] }),
+      item({ id: 'sample-tranexamic-acid', displayName: 'tranexamic acid 1,000 mg/10 mL injection', ingredientNames: ['tranexamic acid'], ingredientRxcuis: ['10691'], packageNdcs: [], dosageForms: ['injection'] }),
     ];
 
     const unrelatedDrugs: FdaShortageRecord[] = [

@@ -1,4 +1,23 @@
 import { migrationRunner, sql } from '@forge/sql';
+import { kvs } from '@forge/kvs';
+
+const SCHEMA_VERSION = '017';
+const SCHEMA_KVS_KEY = 'shortfall:schemaVersion';
+
+let schemaVerifiedInMemory = false;
+let sqlStatementCount = 0;
+
+export function resetSqlStatementCount(): void {
+  sqlStatementCount = 0;
+}
+
+export function getSqlStatementCount(): number {
+  return sqlStatementCount;
+}
+
+export function recordSqlStatement(delta = 1): void {
+  sqlStatementCount += delta;
+}
 
 /**
  * Versioned schema migrations, applied by the sync worker before it touches
@@ -221,6 +240,7 @@ export async function query<T = Record<string, unknown>>(
   statement: string,
   params: unknown[] = [],
 ): Promise<T[]> {
+  sqlStatementCount++;
   const safeParams = params.map((p) => (p === undefined ? null : p));
   const res = await sql.prepare<T>(statement).bindParams(...safeParams).execute();
   return Array.isArray(res.rows) ? (res.rows as T[]) : [];
@@ -228,13 +248,37 @@ export async function query<T = Record<string, unknown>>(
 
 /** Execute a parameterized INSERT / UPDATE / DELETE statement. */
 export async function execute(statement: string, params: unknown[] = []): Promise<void> {
+  sqlStatementCount++;
   const safeParams = params.map((p) => (p === undefined ? null : p));
   await sql.prepare(statement).bindParams(...safeParams).execute();
 }
 
-/** Apply pending migrations. Idempotent; safe to call at every job start. */
+/**
+ * Apply pending migrations at most once per schema version per installation.
+ * Checking KVS + in-process memory avoids running 2 DDL statements on every
+ * resolver/action/sync invocation once migrations are already applied.
+ */
 export async function runMigrations(): Promise<string[]> {
-  return migrationRunner.run();
+  if (schemaVerifiedInMemory) return [];
+  try {
+    const appliedVersion = (await kvs.get(SCHEMA_KVS_KEY)) as string | undefined;
+    if (appliedVersion === SCHEMA_VERSION) {
+      schemaVerifiedInMemory = true;
+      return [];
+    }
+  } catch {
+    // Fall through to migrationRunner if KVS read fails.
+  }
+  // migrationRunner.run() executes at least 2 DDL statements (init + list) plus 2 per pending migration.
+  const ran = await migrationRunner.run();
+  sqlStatementCount += 2 + ran.length * 2;
+  schemaVerifiedInMemory = true;
+  try {
+    await kvs.set(SCHEMA_KVS_KEY, SCHEMA_VERSION);
+  } catch {
+    // Non-fatal; will re-verify on cold start.
+  }
+  return ran;
 }
 
 export { sql };

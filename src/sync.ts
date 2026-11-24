@@ -1,6 +1,15 @@
+import { createHash } from 'node:crypto';
 import { Queue } from '@forge/events';
 import type { UpdateQueryResponse } from '@forge/sql';
-import { sql, query, execute, runMigrations } from './storage/schema';
+import {
+  sql,
+  query,
+  execute,
+  runMigrations,
+  resetSqlStatementCount,
+  getSqlStatementCount,
+  recordSqlStatement,
+} from './storage/schema';
 import { fetchShortages } from './fda';
 import { RxNavClient, mapWithConcurrency } from './rxnav';
 import { matchShortages, shortageKey } from './match';
@@ -16,10 +25,11 @@ import {
 
 const syncQueue = new Queue({ key: 'sync-queue' });
 
-const SHORTAGE_BATCH_SIZE = 40;
-const MATCH_BATCH_SIZE = 40;
+const SHORTAGE_BATCH_SIZE = 50;
+const MATCH_BATCH_SIZE = 50;
 const STALE_ID_BATCH_SIZE = 100;
 const RXNAV_CONCURRENCY = 5;
+const FDA_SWEEP_HASH_KEY = 'shortfall:fdaSweepHash';
 
 interface SyncProgress {
   fdaDone: number;
@@ -59,6 +69,7 @@ function parseHistory(raw: string | null | undefined): StatusTransition[] {
 }
 
 async function startSyncRun(kind: string): Promise<number> {
+  recordSqlStatement();
   const res = await sql
     .prepare<UpdateQueryResponse>(
       `INSERT INTO sync_run (kind, state, started_at) VALUES (?, 'running', NOW())`,
@@ -169,23 +180,57 @@ async function buildIngredientIndex(
   return index;
 }
 
+/** Compute a deterministic content hash across all fetched FDA records. */
+function computeFdaSweepHash(deduped: Map<string, FdaShortageRecord>): string {
+  const hash = createHash('sha256');
+  const sortedKeys = [...deduped.keys()].sort();
+  for (const key of sortedKeys) {
+    const r = deduped.get(key)!;
+    hash.update(
+      `${key}|${r.status ?? ''}|${r.presentation ?? ''}|${r.package_ndc ?? ''}|${r.dosage_form ?? ''}|${r.company_name ?? ''}|${r.availability ?? ''}|${r.update_date ?? ''}|${r.discontinued_date ?? ''}|${r.contact_info ?? ''}|${r.related_info ?? ''}\n`,
+    );
+  }
+  return hash.digest('hex');
+}
+
 async function upsertShortages(
   records: FdaShortageRecord[],
-): Promise<{ keys: string[]; newKeys: string[]; resolvedKeys: string[] }> {
-  const existingRows = await query<{
-    shortage_key: string;
-    status: string | null;
-    status_history: string | null;
-  }>(`SELECT shortage_key, status, status_history FROM shortage`);
-  const existingMap = new Map(existingRows.map((r) => [r.shortage_key, r]));
-
+): Promise<{ keys: string[]; newKeys: string[]; resolvedKeys: string[]; upsertedCount: number; skippedUnchanged: boolean }> {
   // Deduplicate within the batch by shortageKey (last wins).
   const deduped = new Map<string, FdaShortageRecord>();
   for (const r of records) {
     deduped.set(shortageKey(r), r);
   }
+  const keys = [...deduped.keys()];
 
-  const keys: string[] = [];
+  // Fast path: if the full FDA content hash matches the last completed sweep
+  // (and the shortage table already has those rows), do 0 SQL writes.
+  const sweepHash = computeFdaSweepHash(deduped);
+  const prevSweep = (await kvs.get(FDA_SWEEP_HASH_KEY)) as
+    | { hash?: string; count?: number }
+    | undefined;
+  if (prevSweep?.hash === sweepHash && prevSweep?.count === deduped.size && deduped.size > 0) {
+    return {
+      keys,
+      newKeys: [],
+      resolvedKeys: [],
+      upsertedCount: 0,
+      skippedUnchanged: true,
+    };
+  }
+
+  const existingRows = await query<{
+    shortage_key: string;
+    status: string | null;
+    presentation: string | null;
+    availability: string | null;
+    update_date: string | null;
+    status_history: string | null;
+  }>(
+    `SELECT shortage_key, status, presentation, availability, update_date, status_history FROM shortage`,
+  );
+  const existingMap = new Map(existingRows.map((r) => [r.shortage_key, r]));
+
   const newKeys: string[] = [];
   const resolvedKeys: string[] = [];
   const nowIso = new Date().toISOString();
@@ -196,16 +241,24 @@ async function upsertShortages(
     statusHistoryJson: string | null;
   }
 
-  const rows: PreparedShortage[] = [];
+  // Only batch-upsert rows that are brand-new or whose core FDA fields changed.
+  const dirtyRows: PreparedShortage[] = [];
   for (const [key, r] of deduped.entries()) {
-    keys.push(key);
     const prevRow = existingMap.get(key);
     const prevStatus = prevRow?.status ?? null;
     const nextStatus = r.status ?? '';
 
     if (!prevRow) {
       newKeys.push(key);
+    } else {
+      const unchanged =
+        (prevRow.status ?? '') === nextStatus &&
+        (prevRow.presentation ?? '') === trunc(r.presentation, 512) &&
+        (prevRow.availability ?? '') === trunc(r.availability, 128) &&
+        (prevRow.update_date ?? '') === trunc(r.update_date, 32);
+      if (unchanged) continue;
     }
+
     if (nextStatus === 'Resolved' && prevStatus && prevStatus !== 'Resolved') {
       resolvedKeys.push(key);
     }
@@ -215,11 +268,11 @@ async function upsertShortages(
       history.push({ from: prevStatus, to: nextStatus, at: nowIso });
     }
     const statusHistoryJson = history.length ? JSON.stringify(history) : null;
-    rows.push({ key, record: r, statusHistoryJson });
+    dirtyRows.push({ key, record: r, statusHistoryJson });
   }
 
-  for (let i = 0; i < rows.length; i += SHORTAGE_BATCH_SIZE) {
-    const chunk = rows.slice(i, i + SHORTAGE_BATCH_SIZE);
+  for (let i = 0; i < dirtyRows.length; i += SHORTAGE_BATCH_SIZE) {
+    const chunk = dirtyRows.slice(i, i + SHORTAGE_BATCH_SIZE);
     const placeholders = chunk
       .map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())')
       .join(', ');
@@ -249,6 +302,7 @@ async function upsertShortages(
       );
     }
 
+    recordSqlStatement();
     await sql
       .prepare(
         `INSERT INTO shortage (
@@ -280,10 +334,18 @@ async function upsertShortages(
       .execute();
   }
 
-  return { keys, newKeys, resolvedKeys };
+  await kvs.set(FDA_SWEEP_HASH_KEY, { hash: sweepHash, count: deduped.size });
+  return {
+    keys,
+    newKeys,
+    resolvedKeys,
+    upsertedCount: dirtyRows.length,
+    skippedUnchanged: false,
+  };
 }
 
 export async function runSyncJob(kind: string): Promise<void> {
+  resetSqlStatementCount();
   await runMigrations();
   const runId = await startSyncRun(kind);
   console.log(`[shortfall] sync run ${runId} started (kind=${kind})`);
@@ -309,12 +371,14 @@ export async function runSyncJob(kind: string): Promise<void> {
       },
     });
 
-    const { newKeys, resolvedKeys } = await upsertShortages(records);
+    const { newKeys, resolvedKeys, upsertedCount, skippedUnchanged } = await upsertShortages(records);
     const formulary = await loadFormulary();
     const index = await buildIngredientIndex(records, rxnav);
     const matches = matchShortages(records, formulary, index);
     progress.matched = matches.length;
-    await updateSyncRun(runId, { progress });
+    if (!skippedUnchanged) {
+      await updateSyncRun(runId, { progress });
+    }
 
     // Persist matches idempotently: keep one active row per
     // (shortage_key, formulary_item_id); supersede rows no longer valid.
@@ -370,35 +434,61 @@ export async function runSyncJob(kind: string): Promise<void> {
       : { created: 0, skipped: 'auto-create disabled' };
     const reversalResult = await openReversalTasks(resolvedKeys);
 
+    // Single aggregate query for EVIDENCE logging (replaces 6 separate COUNT queries).
+    const countRow = (
+      await query<{
+        shortage: number;
+        formulary_item: number;
+        match_n: number;
+        impact_item: number;
+        response: number;
+        sync_run: number;
+      }>(
+        `SELECT
+           (SELECT COUNT(*) FROM shortage) AS shortage,
+           (SELECT COUNT(*) FROM formulary_item) AS formulary_item,
+           (SELECT COUNT(*) FROM \`match\`) AS match_n,
+           (SELECT COUNT(*) FROM impact_item) AS impact_item,
+           (SELECT COUNT(*) FROM response) AS response,
+           (SELECT COUNT(*) FROM sync_run) AS sync_run`,
+      )
+    )[0];
+
+    const sqlStatements = getSqlStatementCount();
     await kvs.set('lastSync', {
       finishedAt: new Date().toISOString(),
       fdaLastUpdated: lastUpdated,
       records: records.length,
+      upsertedShortages: upsertedCount,
+      skippedUnchanged,
       matched: matches.length,
       impact: impactResult,
       responses: responseResult,
       supersededResponses,
       reversals: reversalResult,
+      sqlStatements,
     });
     await updateSyncRun(runId, {
       state: 'done',
       progress,
       result: JSON.stringify({
         records: records.length,
+        upserted: upsertedCount,
+        skippedUnchanged,
         matched: matches.length,
         impact: impactResult,
+        sqlStatements: getSqlStatementCount(),
       }),
     });
 
-    // Evidence for `forge logs`: run summary + table counts after the run.
-    const countQuery = async (sqlText: string) =>
-      (await query<{ n: number }>(sqlText))[0]?.n ?? 0;
     console.log(
       '[shortfall] EVIDENCE ' +
         JSON.stringify({
           runId,
           fdaRecords: records.length,
           fdaLastUpdated: lastUpdated,
+          upsertedShortages: upsertedCount,
+          skippedUnchanged,
           newShortages: newKeys.length,
           newMatchedShortages: newMatchedKeys.length,
           resolvedNow: resolvedKeys.length,
@@ -406,13 +496,14 @@ export async function runSyncJob(kind: string): Promise<void> {
           impact: impactResult,
           responses: responseResult,
           reversals: reversalResult,
+          sqlStatements: getSqlStatementCount(),
           counts: {
-            shortage: await countQuery('SELECT COUNT(*) AS n FROM shortage'),
-            formulary_item: await countQuery('SELECT COUNT(*) AS n FROM formulary_item'),
-            match: await countQuery('SELECT COUNT(*) AS n FROM `match`'),
-            impact_item: await countQuery('SELECT COUNT(*) AS n FROM impact_item'),
-            response: await countQuery('SELECT COUNT(*) AS n FROM response'),
-            sync_run: await countQuery('SELECT COUNT(*) AS n FROM sync_run'),
+            shortage: Number(countRow?.shortage ?? 0),
+            formulary_item: Number(countRow?.formulary_item ?? 0),
+            match: Number(countRow?.match_n ?? 0),
+            impact_item: Number(countRow?.impact_item ?? 0),
+            response: Number(countRow?.response ?? 0),
+            sync_run: Number(countRow?.sync_run ?? 0),
           },
         }),
     );

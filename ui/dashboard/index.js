@@ -836,6 +836,7 @@ function renderDrawer(shortageKey, detail) {
 
   // Response & Owner Tasks
   const resp = detail?.response ?? null;
+  const hasHumanOwners = impact.some((i) => i.owner_name && i.owner_name.trim().toLowerCase() !== 'shortfall');
   const responseHtml = resp
     ? `<div class="item-card">
         <div class="item-card-top">
@@ -847,6 +848,11 @@ function renderDrawer(shortageKey, detail) {
           ${resp.resolved_at ? `<span>Resolved: <strong class="mono">${esc(formatDateTime(resp.resolved_at))}</strong></span>` : ''}
         </div>
         ${resp.decision_summary ? `<p style="margin:8px 0 0;font-size:12.5px;">${esc(resp.decision_summary)}</p>` : ''}
+        ${
+          hasHumanOwners
+            ? `<div style="margin-top:10px;"><button type="button" class="btn btn-sm" id="drawer-create-owner-tasks" data-shortage-key="${esc(shortageKey)}">Create Owner Review Tasks (linked)</button></div>`
+            : ''
+        }
       </div>`
     : `<div class="item-card">
         <p style="margin:0 0 10px;font-size:12.5px;color:var(--sf-text-subtle);">No Jira response work item opened yet. Creating a response requires explicit confirmation unless auto-create is enabled in Setup.</p>
@@ -973,16 +979,15 @@ async function loadSetupOptions() {
 }
 
 async function refresh() {
-  const [dash, matches, syncLog, sample] = await Promise.all([
+  const [dash, matches, sample] = await Promise.all([
     invoke('getDashboardData'),
     invoke('getMatchedShortages'),
-    invoke('getSyncLog'),
     invoke('getSampleState').catch(() => null),
   ]);
 
   state.dash = dash ?? {};
   state.matches = Array.isArray(matches) ? matches : [];
-  state.syncLog = Array.isArray(syncLog) ? syncLog : [];
+  state.syncLog = Array.isArray(dash?.syncLog) ? dash.syncLog : [];
   state.sample = sample;
 
   if (dash?.siteUrl) setSiteUrl(dash.siteUrl);
@@ -991,6 +996,14 @@ async function refresh() {
   renderShortages();
   renderSyncLog();
   renderSampleState();
+
+  // Only poll getSyncProgress if the latest sync run is actively running/queued.
+  const latestState = dash?.latestSyncProgress?.state;
+  if (latestState === 'running' || latestState === 'queued') {
+    if (!state.pollTimer) pollProgress();
+  } else {
+    $('progress-banner').hidden = true;
+  }
 
   if (!state.initialTabChosen) {
     state.initialTabChosen = true;
@@ -1024,7 +1037,7 @@ async function pollProgress() {
         label = prog;
       }
       $('progress-detail').textContent = label;
-      state.pollTimer = setTimeout(pollProgress, 2500);
+      state.pollTimer = setTimeout(pollProgress, 5000);
     } else {
       const wasVisible = !$('progress-banner').hidden;
       $('progress-banner').hidden = true;
@@ -1209,6 +1222,37 @@ $('drawer-body').addEventListener('click', async (e) => {
       showToast(`Failed to create response: ${err?.message ?? err}`, true);
       createBtn.disabled = false;
       createBtn.textContent = 'Create Jira Response + Owner Tasks';
+    }
+    return;
+  }
+
+  const ownerBtn = e.target.closest('#drawer-create-owner-tasks');
+  if (ownerBtn) {
+    const shortageKey = ownerBtn.dataset.shortageKey;
+    ownerBtn.disabled = true;
+    ownerBtn.textContent = 'Creating owner review tasks…';
+    try {
+      const r = await invoke('createOwnerTasks', { shortageKey });
+      if (r?.error) {
+        showToast(`Could not create owner tasks: ${cleanUserError(r.error)}`, true);
+      } else {
+        const created = Array.isArray(r?.created) ? r.created : [];
+        const skipped = Number(r?.skippedExisting ?? 0);
+        if (created.length > 0) {
+          showToast(
+            `Created ${created.length} linked Owner Review task${created.length === 1 ? '' : 's'} (${created.join(', ')}) linked to ${r?.parentIssueKey ?? 'response'}.`,
+          );
+        } else if (skipped > 0) {
+          showToast(`Owner review task${skipped === 1 ? '' : 's'} already exist for all resolved owners.`);
+        } else {
+          showToast('No human page owners resolved yet — click Enrich owners & links first.', true);
+        }
+      }
+      await Promise.all([refresh(), openDrawer(shortageKey)]);
+    } catch (err) {
+      showToast(`Failed to create owner tasks: ${cleanUserError(err)}`, true);
+      ownerBtn.disabled = false;
+      ownerBtn.textContent = 'Create Owner Review Tasks (linked)';
     }
     return;
   }
@@ -1410,7 +1454,6 @@ $('btn-remove-sample').addEventListener('click', async () => {
 
   try {
     await refresh();
-    await pollProgress();
   } catch (e) {
     showToast(`Failed to load Shortfall dashboard: ${e?.message ?? e}`, true);
     $('shortages-container').innerHTML = `<div class="empty-state">${SHELF_GAP_SVG}<h3>Could not load dashboard</h3><p>${esc(e?.message ?? e)}</p></div>`;

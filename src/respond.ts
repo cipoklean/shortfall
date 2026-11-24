@@ -556,6 +556,130 @@ export async function createResponseForShortage(
 }
 
 /**
+ * Create missing [Owner Review] Jira tasks (with real Relates issue links)
+ * for an existing open response once human page owners have been resolved
+ * (e.g. after running Enrich owners & links). Idempotent per (ingredient, owner).
+ */
+export async function createOwnerTasksForResponse(
+  shortageKey: string,
+  opts?: { asUser?: boolean },
+): Promise<{ created: string[]; skippedExisting: number; parentIssueKey?: string; error?: string }> {
+  const settings = await getSettings();
+  if (!settings.responseProjectKey) {
+    return { created: [], skippedExisting: 0, error: 'No response Jira project configured.' };
+  }
+
+  const shortageRows = await query<ShortageRow>(
+    `SELECT shortage_key, generic_name, presentation, status, package_ndc, availability, company_name, update_date
+     FROM shortage WHERE shortage_key = ? LIMIT 1`,
+    [shortageKey],
+  );
+  const s = shortageRows[0];
+  if (!s) return { created: [], skippedExisting: 0, error: `Unknown shortage ${shortageKey}` };
+
+  const ingKey = baseIngredientName(s.generic_name ?? '').toLowerCase();
+  const openRespRows = await query<{ id: number; ingredient: string; jira_issue_key: string }>(
+    `SELECT id, ingredient, jira_issue_key
+     FROM response
+     WHERE COALESCE(state, 'open') = 'open'
+       AND jira_issue_key IS NOT NULL
+       AND jira_issue_key NOT LIKE 'SAMPLE-%'
+       AND jira_issue_key NOT LIKE 'HIST-%'`,
+  );
+  const resp =
+    openRespRows.find((r) => baseIngredientName(r.ingredient ?? '').toLowerCase() === ingKey) ??
+    (
+      await query<{ id: number; ingredient: string; jira_issue_key: string }>(
+        `SELECT id, ingredient, jira_issue_key FROM response WHERE shortage_key = ? AND COALESCE(state, 'open') = 'open' LIMIT 1`,
+        [shortageKey],
+      )
+    )[0];
+  if (!resp) {
+    return { created: [], skippedExisting: 0, error: 'No open Jira response exists for this ingredient yet.' };
+  }
+
+  const [impacts, storedSiteUrl] = await Promise.all([
+    query<ImpactOwnerRow>(
+      `SELECT kind, ref_id, title, url, owner_account_id, owner_name, team_name
+       FROM impact_item
+       WHERE shortage_key = ?
+         AND (kind != 'jira' OR (title NOT LIKE '[Shortage]%' AND title NOT LIKE '[Owner Review]%' AND title NOT LIKE '[Reversal]%'))
+       ORDER BY COALESCE(hop, 1), kind, title`,
+      [shortageKey],
+    ),
+    kvs.get('siteUrl') as Promise<string | undefined>,
+  ]);
+  const siteUrl = storedSiteUrl ? String(storedSiteUrl).replace(/\/+$/, '') : undefined;
+  const priority = priorityForStatus(s.status) ?? 'High';
+
+  const byOwner = new Map<
+    string,
+    { ownerName: string; ownerAccountId?: string; items: { title: string; url: string }[] }
+  >();
+  for (const item of impacts) {
+    const name = (item.owner_name ?? '').trim();
+    if (isBotOwner(name)) continue;
+    const acct = (item.owner_account_id ?? '').trim() || undefined;
+    const ownerKey = acct ? `acct:${acct}` : `name:${name.toLowerCase()}`;
+    const entry = byOwner.get(ownerKey);
+    if (entry) {
+      if (!entry.items.some((x) => x.title === item.title)) {
+        entry.items.push({ title: item.title, url: item.url });
+      }
+    } else {
+      byOwner.set(ownerKey, {
+        ownerName: name,
+        ownerAccountId: acct,
+        items: [{ title: item.title, url: item.url }],
+      });
+    }
+  }
+
+  const created: string[] = [];
+  let skippedExisting = 0;
+  const effectiveIngKey = ingKey || shortageKey;
+
+  for (const [ownerKey, owner] of byOwner.entries()) {
+    const existing = await query<{ jira_issue_key: string }>(
+      `SELECT jira_issue_key FROM owner_task WHERE ingredient_key = ? AND owner_key = ? LIMIT 1`,
+      [effectiveIngKey, ownerKey],
+    );
+    if (existing.length) {
+      skippedExisting++;
+      continue;
+    }
+
+    const ownerSummary = `[Owner Review] ${s.generic_name} — ${owner.ownerName}`;
+    const ownerAdf = buildOwnerTaskAdf(s, resp.jira_issue_key, owner.ownerName, owner.items, siteUrl);
+    const sub = await createJiraWorkItem(settings.responseProjectKey, ownerSummary, ownerSummary, {
+      assigneeAccountId: owner.ownerAccountId ?? null,
+      priority,
+      parentKey: resp.jira_issue_key,
+      asUser: opts?.asUser,
+      descriptionAdf: ownerAdf,
+    });
+    await linkJiraIssues(sub.key, resp.jira_issue_key, { asUser: opts?.asUser });
+    await execute(
+      `INSERT IGNORE INTO owner_task
+         (response_id, ingredient_key, owner_key, owner_account_id, owner_name, jira_issue_key, jira_issue_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        resp.id,
+        effectiveIngKey.slice(0, 256),
+        ownerKey.slice(0, 128),
+        owner.ownerAccountId ?? null,
+        owner.ownerName.slice(0, 256),
+        sub.key,
+        sub.id,
+      ],
+    );
+    created.push(sub.key);
+  }
+
+  return { created, skippedExisting, parentIssueKey: resp.jira_issue_key };
+}
+
+/**
  * Create at most one automatic Jira response (plus deduplicated per-owner
  * review tasks) per newly matched non-resolved ingredient so a multi-NDC
  * shortage never floods Jira with duplicate tickets.

@@ -42,7 +42,6 @@ interface PendingImpactRow {
 
 const MAX_TERMS_PER_QUERY = 6;
 const MAX_TERM_LENGTH = 60;
-const SQL_IN_CHUNK = 100;
 const INSERT_CHUNK = 40;
 
 /** Normalize Confluence webui links so relative paths always include the /wiki prefix. */
@@ -97,6 +96,12 @@ export function searchTermsFor(shortage: ShortageRow): string[] {
   return [...byNorm.values()].slice(0, MAX_TERMS_PER_QUERY);
 }
 
+function isAppAccount(accountType?: string, displayName?: string): boolean {
+  if (accountType === 'app') return true;
+  const n = (displayName ?? '').trim().toLowerCase();
+  return !n || n === 'shortfall';
+}
+
 async function searchConfluence(
   terms: string[],
   spaceKeys: string[],
@@ -119,21 +124,26 @@ async function searchConfluence(
         id: string;
         title: string;
         _links?: { webui?: string };
-        version?: { by?: { displayName?: string; accountId?: string } };
+        version?: { by?: { displayName?: string; accountId?: string; accountType?: string } };
         space?: { key?: string };
       }[];
     };
     return {
-      items: (body.results ?? []).map((p) => ({
-        kind: 'page',
-        refId: p.id,
-        title: p.title,
-        url: normalizeConfluenceUrl(p._links?.webui),
-        ownerAccountId: p.version?.by?.accountId,
-        ownerName: p.version?.by?.displayName,
-        spaceKey: p.space?.key,
-        foundVia: 'confluence-search',
-      })),
+      items: (body.results ?? []).map((p) => {
+        const by = p.version?.by;
+        const humanOwner = !isAppAccount(by?.accountType, by?.displayName);
+        return {
+          kind: 'page',
+          refId: p.id,
+          title: p.title,
+          url: normalizeConfluenceUrl(p._links?.webui),
+          // Never store the app's own bot account as a page owner.
+          ownerAccountId: humanOwner ? by?.accountId : undefined,
+          ownerName: humanOwner ? by?.displayName : undefined,
+          spaceKey: p.space?.key,
+          foundVia: 'confluence-search',
+        };
+      }),
     };
   } catch (e) {
     return { items: [], error: `CQL error: ${String(e).slice(0, 120)}` };
@@ -196,18 +206,12 @@ async function searchJira(
   }
 }
 
-async function fetchMatchedShortages(keys: string[]): Promise<ShortageRow[]> {
-  const rows: ShortageRow[] = [];
-  for (let i = 0; i < keys.length; i += SQL_IN_CHUNK) {
-    const chunk = keys.slice(i, i + SQL_IN_CHUNK);
-    const placeholders = chunk.map(() => '?').join(',');
-    const batch = await query<ShortageRow>(
-      `SELECT shortage_key, generic_name, openfda_json FROM shortage WHERE shortage_key IN (${placeholders})`,
-      chunk,
-    );
-    rows.push(...batch);
-  }
-  return rows;
+async function fetchMatchedShortages(): Promise<ShortageRow[]> {
+  return query<ShortageRow>(
+    `SELECT DISTINCT s.shortage_key, s.generic_name, s.openfda_json
+     FROM shortage s
+     JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0`,
+  );
 }
 
 async function insertImpactBatch(rows: PendingImpactRow[]): Promise<void> {
@@ -266,25 +270,51 @@ export async function runImpactMapping(
     };
   }
 
-  // Remove any self-referential Shortfall Jira tickets or out-of-scope spaces
-  // that may have been indexed before scope exclusions were configured.
-  await execute(
-    `DELETE FROM impact_item
-     WHERE kind = 'jira'
-       AND (
-         title LIKE '[Shortage]%'
-         OR title LIKE '[Owner Review]%'
-         OR title LIKE '[Reversal]%'
-         OR ref_id IN (SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL)
-       )`,
+  // Load active impact rows, response keys, and matched shortages in 3 parallel queries.
+  const [active, responseKeyRows, shortages] = await Promise.all([
+    query<{
+      shortage_key: string;
+      kind: string;
+      ref_id: string;
+      title: string | null;
+      space_key: string | null;
+      owner_name: string | null;
+    }>(`SELECT shortage_key, kind, ref_id, title, space_key, owner_name FROM impact_item`),
+    query<{ jira_issue_key: string }>(
+      `SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL`,
+    ),
+    fetchMatchedShortages(),
+  ]);
+
+  const responseKeys = new Set(responseKeyRows.map((r) => r.jira_issue_key));
+  const clinicalSet = new Set(settings.clinicalSpaceKeys);
+
+  // Only run cleanup DELETEs when stale/self-referential rows actually exist (0 SQL on clean runs).
+  const hasSelfJira = active.some(
+    (r) =>
+      r.kind === 'jira' &&
+      (isShortfallGeneratedSummary(r.title) ||
+        responseKeys.has(r.ref_id) ||
+        (settings.responseProjectKey ? r.ref_id.startsWith(`${settings.responseProjectKey}-`) : false)),
   );
-  if (settings.responseProjectKey) {
+  if (hasSelfJira) {
     await execute(
-      `DELETE FROM impact_item WHERE kind = 'jira' AND ref_id LIKE ?`,
-      [`${settings.responseProjectKey}-%`],
+      `DELETE FROM impact_item
+       WHERE kind = 'jira'
+         AND (
+           title LIKE '[Shortage]%'
+           OR title LIKE '[Owner Review]%'
+           OR title LIKE '[Reversal]%'
+           OR ref_id IN (SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL)
+           ${settings.responseProjectKey ? 'OR ref_id LIKE ?' : ''}
+         )`,
+      settings.responseProjectKey ? [`${settings.responseProjectKey}-%`] : [],
     );
   }
-  if (settings.clinicalSpaceKeys.length > 0) {
+  const hasOutOfScopeSpace =
+    clinicalSet.size > 0 &&
+    active.some((r) => r.kind === 'page' && r.space_key && !clinicalSet.has(r.space_key));
+  if (hasOutOfScopeSpace) {
     const ph = settings.clinicalSpaceKeys.map(() => '?').join(',');
     await execute(
       `DELETE FROM impact_item
@@ -296,21 +326,21 @@ export async function runImpactMapping(
     );
   }
 
-  const responseKeys = new Set(
-    (
-      await query<{ jira_issue_key: string }>(
-        `SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL`,
-      )
-    ).map((r) => r.jira_issue_key),
-  );
+  // Clear any legacy app-bot owner string ('shortfall') so app accounts are treated as no owner.
+  const hasBotOwner = active.some((r) => (r.owner_name ?? '').trim().toLowerCase() === 'shortfall');
+  if (hasBotOwner) {
+    await execute(
+      `UPDATE impact_item SET owner_name = NULL, owner_account_id = NULL WHERE LOWER(owner_name) = 'shortfall'`,
+    );
+  }
 
-  // One active impact_item per (shortage_key, kind, ref_id).
-  const active = await query<{ shortage_key: string; kind: string; ref_id: string }>(
-    `SELECT shortage_key, kind, ref_id FROM impact_item`,
-  );
   const seen = new Set(active.map((r) => `${r.shortage_key}|${r.kind}|${r.ref_id}`));
-
-  const shortages = await fetchMatchedShortages([...shortageKeys]);
+  const existingOwnerByRef = new Map<string, string>();
+  for (const r of active) {
+    if (r.owner_name && r.owner_name.trim().toLowerCase() !== 'shortfall') {
+      existingOwnerByRef.set(`${r.kind}|${r.ref_id}`, r.owner_name);
+    }
+  }
 
   // Deduplicate searches by normalized search-term signature.
   const groups = new Map<string, { terms: string[]; shortageKeys: string[] }>();
@@ -330,6 +360,7 @@ export async function runImpactMapping(
   }
 
   const pendingInserts: PendingImpactRow[] = [];
+  const ownerUpdates = new Map<string, { kind: string; refId: string; ownerAccountId: string | null; ownerName: string }>();
 
   for (const group of groups.values()) {
     const [conf, jira] = await Promise.all([
@@ -340,6 +371,17 @@ export async function runImpactMapping(
     if (jira.error) missing.push(`jira: ${jira.error}`);
 
     const discovered = [...conf.items, ...jira.items];
+    for (const item of discovered) {
+      const refKey = `${item.kind}|${item.refId}`;
+      if (item.ownerName && !existingOwnerByRef.has(refKey) && !ownerUpdates.has(refKey)) {
+        ownerUpdates.set(refKey, {
+          kind: item.kind,
+          refId: item.refId,
+          ownerAccountId: item.ownerAccountId ?? null,
+          ownerName: item.ownerName,
+        });
+      }
+    }
     for (const key of group.shortageKeys) {
       for (const item of discovered) {
         const dedupeKey = `${key}|${item.kind}|${item.refId}`;
@@ -365,6 +407,14 @@ export async function runImpactMapping(
 
   if (pendingInserts.length) {
     await insertImpactBatch(pendingInserts);
+  }
+  for (const upd of ownerUpdates.values()) {
+    await execute(
+      `UPDATE impact_item
+       SET owner_account_id = ?, owner_name = ?
+       WHERE kind = ? AND ref_id = ? AND (owner_name IS NULL OR owner_name = '' OR LOWER(owner_name) = 'shortfall')`,
+      [upd.ownerAccountId, upd.ownerName, upd.kind, upd.refId],
+    );
   }
 
   return {

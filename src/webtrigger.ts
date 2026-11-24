@@ -1,5 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
-import { query, runMigrations } from './storage/schema';
+import {
+  query,
+  runMigrations,
+  resetSqlStatementCount,
+  getSqlStatementCount,
+} from './storage/schema';
 import { enqueueSync } from './sync';
 import { loadSampleHospital, removeSampleHospital } from './sample';
 import {
@@ -313,6 +318,38 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
      FROM impact_item LIMIT 100`,
   );
 
+  const includeBench = req.queryParameters?.bench?.[0] === '1';
+  let sqlBench: Record<string, unknown> | undefined;
+  if (includeBench) {
+    resetSqlStatementCount();
+    await runMigrations();
+    await computeDashboardMetrics();
+    await query(
+      `SELECT id, kind, state, progress, started_at, finished_at, result
+       FROM sync_run ORDER BY started_at DESC, id DESC LIMIT 10`,
+    );
+    await query(
+      `SELECT s.shortage_key, MAX(s.generic_name) AS generic_name
+       FROM \`match\` m
+       JOIN shortage s ON s.shortage_key = m.shortage_key
+       JOIN formulary_item f ON f.id = m.formulary_item_id
+       WHERE m.superseded = 0
+       GROUP BY s.shortage_key
+       LIMIT 2000`,
+    );
+    const dashboardLoadStatements = getSqlStatementCount();
+    const lastSyncObj = lastSync as { sqlStatements?: number; skippedUnchanged?: boolean } | null;
+    sqlBench = {
+      dashboardLoadStatements,
+      lastSyncStatements: lastSyncObj?.sqlStatements ?? null,
+      lastSyncSkippedUnchanged: lastSyncObj?.skippedUnchanged ?? null,
+      combinedNoChangeSyncPlusDashboard:
+        lastSyncObj?.sqlStatements != null
+          ? lastSyncObj.sqlStatements + dashboardLoadStatements
+          : null,
+    };
+  }
+
   return json(200, {
     generatedAt: new Date().toISOString(),
     counts: {
@@ -325,6 +362,7 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
       sync_run: await countQuery('SELECT COUNT(*) AS n FROM sync_run'),
     },
     kpis,
+    sqlBench,
     rovoCheck,
     audit,
     syncRuns,

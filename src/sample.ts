@@ -37,8 +37,8 @@ export const SAMPLE_DRUGS: SampleDrug[] = [
   { id: 'sample-bumetanide', displayName: 'bumetanide injection', ingredients: ['bumetanide'], packageNdcs: ['72205-102-07'], dosageForms: ['injection'] },
   { id: 'sample-furosemide-tab', displayName: 'furosemide 40 mg tablet', ingredients: ['furosemide'], packageNdcs: [], dosageForms: ['tablet'] },
   { id: 'sample-acetaminophen', displayName: 'acetaminophen 500 mg tablet', ingredients: ['acetaminophen'], packageNdcs: [], dosageForms: ['tablet'] },
-  { id: 'sample-insulin-glargine', displayName: 'insulin glargine 100 units/mL injection', ingredients: ['insulin glargine'], packageNdcs: [], dosageForms: ['injection'] },
-  { id: 'sample-metformin', displayName: 'metformin 500 mg tablet', ingredients: ['metformin'], packageNdcs: [], dosageForms: ['tablet'] },
+  { id: 'sample-ondansetron', displayName: 'ondansetron 4 mg/2 mL injection', ingredients: ['ondansetron'], packageNdcs: [], dosageForms: ['injection'] },
+  { id: 'sample-tranexamic-acid', displayName: 'tranexamic acid 1,000 mg/10 mL injection', ingredients: ['tranexamic acid'], packageNdcs: [], dosageForms: ['injection'] },
 ];
 
 const SPACE_KEY = 'SHOSP';
@@ -462,6 +462,16 @@ export async function loadSampleHospital(): Promise<{
     await insertFormularyItem(item);
     if (!refs.formularyIds.includes(drug.id)) refs.formularyIds.push(drug.id);
   });
+
+  // Remove any retired sample formulary entries (e.g. insulin glargine / metformin replaced by surgical staples).
+  const currentSampleIds = new Set(SAMPLE_DRUGS.map((d) => d.id));
+  const retiredIds = refs.formularyIds.filter((id) => !currentSampleIds.has(id));
+  if (retiredIds.length > 0) {
+    const ph = retiredIds.map(() => '?').join(',');
+    await execute(`DELETE FROM \`match\` WHERE formulary_item_id IN (${ph})`, retiredIds);
+    await execute(`DELETE FROM formulary_item WHERE id IN (${ph})`, retiredIds);
+    refs.formularyIds = refs.formularyIds.filter((id) => currentSampleIds.has(id));
+  }
 
   await seedSampleHistoryAndReversal(refs);
 
