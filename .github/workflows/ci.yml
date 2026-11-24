@@ -9,6 +9,9 @@ jobs:
   app:
     name: Forge app — lint, typecheck, test
     runs-on: ubuntu-latest
+    env:
+      FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
+      FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,10 +24,7 @@ jobs:
       - run: npx eslint src test
       - run: npx vitest run
       - name: Validate manifest
-        if: ${{ secrets.FORGE_EMAIL != '' && secrets.FORGE_API_TOKEN != '' }}
-        env:
-          FORGE_EMAIL: ${{ secrets.FORGE_EMAIL }}
-          FORGE_API_TOKEN: ${{ secrets.FORGE_API_TOKEN }}
+        if: ${{ env.FORGE_EMAIL != '' && env.FORGE_API_TOKEN != '' }}
         run: |
           npm install -g @forge/cli@latest
           forge lint
