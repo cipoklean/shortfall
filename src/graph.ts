@@ -199,7 +199,7 @@ export async function teamsForSpace(spaceAri: string): Promise<{ nodes: GraphNod
   const { nodes, error } = await graphQuery(
     `query shortfall_teamsBySpace($spaceAri: ID!) {
       atlassianTeamsBySpace(spaceAri: $spaceAri, first: 10) {
-        edges { node { ... on AtlassianTeam { id name } } }
+        edges { node { ... on AtlassianTeam { id displayName } } }
       }
     }`,
     { spaceAri },
@@ -212,7 +212,7 @@ export async function userTeams(userAri: string): Promise<{ nodes: GraphNode[]; 
   const { nodes, error } = await graphQuery(
     `query shortfall_userTeams($userId: ID!) {
       atlassianUserInTeams(userId: $userId, first: 10) {
-        edges { node { ... on AtlassianTeam { id name } } }
+        edges { node { ... on AtlassianTeam { id displayName } } }
       }
     }`,
     { userId: userAri },

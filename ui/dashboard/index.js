@@ -102,11 +102,21 @@ function reasonBadge(reason) {
 
 function formatDateTime(val) {
   if (!val) return '—';
-  const str = String(val);
-  const d = new Date(str);
-  if (Number.isNaN(d.getTime())) return str;
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+  const raw = String(val).trim();
+  // Convert MySQL UTC 'YYYY-MM-DD HH:MM:SS' to ISO UTC before rendering in viewer's local timezone.
+  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(raw)
+    ? `${raw.replace(' ', 'T')}Z`
+    : raw;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 }
 
 function formatHours(val) {
@@ -251,11 +261,33 @@ function renderHeaderAndKpis() {
   $('kpi-responses').textContent = String(openResponses);
   $('kpi-responses-sub').textContent = `${openTemp} temp change${openTemp === 1 ? '' : 's'} open`;
 
-  $('kpi-reversals').textContent = String(reversalsDue);
-  $('kpi-reversals-card').classList.toggle('kpi-red', reversalsDue > 0);
-  $('kpi-reversals-sub').textContent = reversalsDue > 0 ? 'Action needed on resolved drugs' : 'All clear';
+  const reversalsInProgress = Number(d.reversalsInProgress ?? 0);
+  const revKeys = Array.isArray(d.reversalsInProgressKeys) ? d.reversalsInProgressKeys.filter(Boolean) : [];
+  if (reversalsDue > 0) {
+    $('kpi-reversals').textContent = String(reversalsDue);
+    $('kpi-reversals-card').classList.add('kpi-red');
+    $('kpi-reversals-card').classList.remove('kpi-amber');
+    $('kpi-reversals-sub').textContent = 'Action needed on resolved drugs';
+  } else if (reversalsInProgress > 0) {
+    $('kpi-reversals').textContent = String(reversalsInProgress);
+    $('kpi-reversals-card').classList.remove('kpi-red');
+    $('kpi-reversals-card').classList.add('kpi-amber');
+    const keyNote = revKeys.length ? ` (${revKeys.slice(0, 3).join(', ')})` : '';
+    $('kpi-reversals-sub').textContent = `${reversalsInProgress} in progress${keyNote}`;
+  } else {
+    $('kpi-reversals').textContent = '0';
+    $('kpi-reversals-card').classList.remove('kpi-red', 'kpi-amber');
+    $('kpi-reversals-sub').textContent = 'All clear';
+  }
 
-  $('kpi-median').textContent = d.medianResponseHours != null ? formatHours(d.medianResponseHours) : '—';
+  const medianCard = $('kpi-median-card');
+  if (d.medianResponseHours != null && Number.isFinite(Number(d.medianResponseHours))) {
+    $('kpi-median').textContent = formatHours(d.medianResponseHours);
+    if (medianCard) medianCard.hidden = false;
+  } else {
+    $('kpi-median').textContent = '—';
+    if (medianCard) medianCard.hidden = true;
+  }
 
   // Exposure by space chips
   const spaces = Array.isArray(d.exposureBySpace) ? d.exposureBySpace.filter((s) => s && s.spaceKey) : [];
@@ -1080,11 +1112,19 @@ $('btn-enrich').addEventListener('click', async () => {
   try {
     const r = await invoke('enrichImpact');
     const owners = r?.enrichedOwners ?? r?.enriched ?? 0;
-    const linked = r?.discoveredLinkedPages ?? 0;
-    const missing = Array.isArray(r?.missing) ? r.missing : [];
-    let msg = `Teamwork Graph enrichment complete: ${owners} owner${owners === 1 ? '' : 's'} resolved, ${linked} 2nd-hop linked protocol${linked === 1 ? '' : 's'} discovered.`;
-    if (missing.length) msg += ` Missing capabilities: ${missing.join(', ')}.`;
-    showToast(msg, missing.length > 0 && owners === 0 && linked === 0);
+    const total2nd = r?.totalSecondHopPages ?? r?.discoveredLinkedPages ?? 0;
+    const ownerTasks = Array.isArray(r?.createdOwnerTasks) ? r.createdOwnerTasks : [];
+    const missing = Array.isArray(r?.missing) ? r.missing.filter((m) => !String(m).includes('Validation error')) : [];
+    const parts = [
+      `${owners} owner${owners === 1 ? '' : 's'} resolved`,
+      `${total2nd} 2nd-hop protocol${total2nd === 1 ? '' : 's'} mapped`,
+    ];
+    if (ownerTasks.length > 0) {
+      parts.push(`${ownerTasks.length} linked Owner Review task${ownerTasks.length === 1 ? '' : 's'} created (${ownerTasks.join(', ')})`);
+    }
+    let msg = `Teamwork Graph enrichment complete: ${parts.join(', ')}.`;
+    if (missing.length) msg += ` Reduced mode: ${missing.join(', ')}.`;
+    showToast(msg, missing.length > 0 && owners === 0 && total2nd === 0);
     await refresh();
     if (state.openDrawerKey) openDrawer(state.openDrawerKey);
   } catch (e) {

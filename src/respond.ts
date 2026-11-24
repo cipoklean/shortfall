@@ -4,7 +4,7 @@ import type { UpdateQueryResponse } from '@forge/sql';
 import { sql, query, execute } from './storage/schema';
 import { getSettings } from './settings';
 import { OPENFDA_DISCLAIMER } from './types';
-import { fdaSourceUrl, baseIngredientName } from './match';
+import { fdaSourceUrl, baseIngredientName, ingredientSignature } from './match';
 import { mapWithConcurrency } from './rxnav';
 
 export const FDA_HUMAN_SHORTAGES_URL = 'https://dps.fda.gov/drugshortages';
@@ -244,6 +244,97 @@ export function buildOwnerTaskAdf(
   return { type: 'doc', version: 1, content };
 }
 
+/** Unified ADF description for [Reversal] tasks with clickable page links and honest sample attribution. */
+export function buildReversalAdf(
+  changeDescription: string,
+  shortage: ShortageRow | null,
+  impacts: ImpactOwnerRow[],
+  originalIssueKey: string | null,
+  siteUrl?: string,
+): AdfDoc {
+  const isRealJiraKey = Boolean(
+    originalIssueKey &&
+      !originalIssueKey.startsWith('SAMPLE-') &&
+      !originalIssueKey.startsWith('HIST-'),
+  );
+  const content: (AdfParagraph | AdfBulletList)[] = [
+    adfPara(
+      adfText('Reversal required: ', [{ type: 'strong' }]),
+      adfText('The related shortage is marked Resolved on the FDA drug shortages list.'),
+    ),
+    adfPara(
+      adfText('Temporary change to reverse: ', [{ type: 'strong' }]),
+      adfText(changeDescription),
+    ),
+  ];
+
+  if (shortage) {
+    content.push(
+      adfPara(
+        adfText(
+          `Drug: ${shortage.generic_name} (${shortage.presentation || shortage.package_ndc || shortage.shortage_key}) | FDA status: ${shortage.status || 'Resolved'} | NDC: ${shortage.package_ndc || 'N/A'}`,
+        ),
+      ),
+      adfPara(
+        adfText('FDA sources: ', [{ type: 'strong' }]),
+        adfLink('FDA Drug Shortages Database', FDA_HUMAN_SHORTAGES_URL),
+        adfText(' · '),
+        adfLink('openFDA record (raw data)', fdaSourceUrl(shortage.package_ndc)),
+      ),
+    );
+  }
+
+  if (isRealJiraKey && originalIssueKey) {
+    const parentHref = resolveSiteHref(`/browse/${originalIssueKey}`, siteUrl);
+    content.push(
+      adfPara(
+        adfText('Original shortage response: ', [{ type: 'strong' }]),
+        parentHref ? adfLink(originalIssueKey, parentHref) : adfText(originalIssueKey),
+      ),
+    );
+  } else {
+    content.push(
+      adfPara(
+        adfText('Source: ', [{ type: 'strong' }]),
+        adfText('Sample hospital demonstration data (no parent Jira shortage response ticket).'),
+      ),
+    );
+  }
+
+  const pageImpacts = impacts.filter((i) => i.kind === 'page');
+  if (pageImpacts.length > 0) {
+    content.push(adfPara(adfText('Affected protocol page(s) to restore:', [{ type: 'strong' }])));
+    content.push({
+      type: 'bulletList',
+      content: pageImpacts.slice(0, 10).map((item) => {
+        const href = resolveSiteHref(item.url, siteUrl);
+        const inline: AdfInline[] = [href ? adfLink(item.title, href) : adfText(item.title)];
+        if (!isBotOwner(item.owner_name)) {
+          inline.push(adfText(` — owner: ${item.owner_name}`));
+        }
+        return { type: 'listItem', content: [adfPara(...inline)] };
+      }),
+    });
+  }
+
+  const hasHumanOwner = impacts.some((i) => !isBotOwner(i.owner_name) && i.owner_account_id);
+  if (!hasHumanOwner) {
+    content.push(
+      adfPara(
+        adfText('Owner assignment note: ', [{ type: 'strong' }]),
+        adfText('No human page owner resolved — left unassigned for pharmacy triage.'),
+      ),
+    );
+  }
+
+  content.push(
+    adfPara(adfText('Confirm reversal in Shortfall and verify the Confluence page notice has cleared.')),
+    adfPara(adfText('Disclaimer: ', [{ type: 'strong' }]), adfText(OPENFDA_DISCLAIMER)),
+  );
+
+  return { type: 'doc', version: 1, content };
+}
+
 function extractInsertId(rows: unknown): number | undefined {
   if (!rows) return undefined;
   if (Array.isArray(rows)) {
@@ -395,7 +486,7 @@ export async function createResponseForShortage(
     };
   }
 
-  const ingKey = baseIngredientName(s.generic_name ?? '').toLowerCase();
+  const ingKey = ingredientSignature(s.generic_name ?? '');
 
   // Idempotent by shortage_key AND by active open ingredient response (at most 1 per shorted ingredient).
   const existingByKey = await query<{ id: number; jira_issue_key: string }>(
@@ -421,7 +512,7 @@ export async function createResponseForShortage(
          AND jira_issue_key NOT LIKE 'HIST-%'`,
     );
     const sameIng = openRows.find(
-      (r) => baseIngredientName(r.ingredient ?? '').toLowerCase() === ingKey,
+      (r) => ingredientSignature(r.ingredient ?? '') === ingKey,
     );
     if (sameIng) {
       return {
@@ -680,6 +771,150 @@ export async function createOwnerTasksForResponse(
 }
 
 /**
+ * Create missing [Owner Review] Jira tasks (with real Relates issue links)
+ * across ALL open Jira shortage responses whose impacted pages now have
+ * resolved human owners. Idempotent: at most 1 task per (ingredient, owner).
+ */
+export async function syncOwnerTasksForOpenResponses(
+  opts?: { asUser?: boolean },
+): Promise<{ created: string[]; skippedExisting: number }> {
+  const settings = await getSettings();
+  if (!settings.responseProjectKey) {
+    return { created: [], skippedExisting: 0 };
+  }
+
+  const openResponses = await query<{
+    id: number;
+    shortage_key: string;
+    ingredient: string;
+    jira_issue_key: string;
+  }>(
+    `SELECT id, shortage_key, ingredient, jira_issue_key
+     FROM response
+     WHERE COALESCE(state, 'open') = 'open'
+       AND jira_issue_key IS NOT NULL
+       AND jira_issue_key NOT LIKE 'SAMPLE-%'
+       AND jira_issue_key NOT LIKE 'HIST-%'`,
+  );
+  if (!openResponses.length) return { created: [], skippedExisting: 0 };
+
+  const [allImpacts, existingTasks, storedSiteUrl] = await Promise.all([
+    query<ImpactOwnerRow & { shortage_key: string; generic_name: string }>(
+      `SELECT i.shortage_key, s.generic_name, i.kind, i.ref_id, i.title, i.url,
+              i.owner_account_id, i.owner_name, i.team_name
+       FROM impact_item i
+       JOIN shortage s ON s.shortage_key = i.shortage_key
+       WHERE i.owner_name IS NOT NULL
+         AND i.owner_name != ''
+         AND LOWER(i.owner_name) != 'shortfall'
+         AND (i.kind != 'jira' OR (i.title NOT LIKE '[Shortage]%' AND i.title NOT LIKE '[Owner Review]%' AND i.title NOT LIKE '[Reversal]%'))`,
+    ),
+    query<{ ingredient_key: string; owner_key: string }>(
+      `SELECT ingredient_key, owner_key FROM owner_task`,
+    ),
+    kvs.get('siteUrl') as Promise<string | undefined>,
+  ]);
+
+  const siteUrl = storedSiteUrl ? String(storedSiteUrl).replace(/\/+$/, '') : undefined;
+  const existingPairs = new Set(
+    existingTasks.map((t) => `${t.ingredient_key}|${t.owner_key}`),
+  );
+
+  // Group impacted items with human owners by exact ingredientSignature.
+  const impactsBySig = new Map<string, (ImpactOwnerRow & { shortage_key: string })[]>();
+  for (const row of allImpacts) {
+    const sig = ingredientSignature(row.generic_name);
+    if (!sig) continue;
+    const list = impactsBySig.get(sig) ?? [];
+    list.push(row);
+    impactsBySig.set(sig, list);
+  }
+
+  const created: string[] = [];
+  let skippedExisting = 0;
+
+  for (const resp of openResponses) {
+    const sig = ingredientSignature(resp.ingredient);
+    const impacts = impactsBySig.get(sig) ?? [];
+    if (!impacts.length) continue;
+
+    const shortageRows = await query<ShortageRow>(
+      `SELECT shortage_key, generic_name, presentation, status, package_ndc, availability, company_name, update_date
+       FROM shortage WHERE shortage_key = ? LIMIT 1`,
+      [resp.shortage_key],
+    );
+    const s = shortageRows[0];
+    if (!s) continue;
+    const priority = priorityForStatus(s.status) ?? 'High';
+
+    const byOwner = new Map<
+      string,
+      { ownerName: string; ownerAccountId?: string; items: { title: string; url: string }[] }
+    >();
+    for (const item of impacts) {
+      const name = (item.owner_name ?? '').trim();
+      if (isBotOwner(name)) continue;
+      const acct = (item.owner_account_id ?? '').trim() || undefined;
+      const ownerKey = acct ? `acct:${acct}` : `name:${name.toLowerCase()}`;
+      const entry = byOwner.get(ownerKey);
+      if (entry) {
+        if (!entry.items.some((x) => x.title === item.title)) {
+          entry.items.push({ title: item.title, url: item.url });
+        }
+      } else {
+        byOwner.set(ownerKey, {
+          ownerName: name,
+          ownerAccountId: acct,
+          items: [{ title: item.title, url: item.url }],
+        });
+      }
+    }
+
+    const effectiveIngKey = sig || resp.shortage_key;
+    for (const [ownerKey, owner] of byOwner.entries()) {
+      const pairKey = `${effectiveIngKey}|${ownerKey}`;
+      if (existingPairs.has(pairKey)) {
+        skippedExisting++;
+        continue;
+      }
+      existingPairs.add(pairKey);
+
+      const ownerSummary = `[Owner Review] ${s.generic_name} — ${owner.ownerName}`;
+      const ownerAdf = buildOwnerTaskAdf(s, resp.jira_issue_key, owner.ownerName, owner.items, siteUrl);
+      try {
+        const sub = await createJiraWorkItem(settings.responseProjectKey, ownerSummary, ownerSummary, {
+          assigneeAccountId: owner.ownerAccountId ?? null,
+          priority,
+          parentKey: resp.jira_issue_key,
+          asUser: opts?.asUser,
+          descriptionAdf: ownerAdf,
+        });
+        await linkJiraIssues(sub.key, resp.jira_issue_key, { asUser: opts?.asUser });
+        await execute(
+          `INSERT IGNORE INTO owner_task
+             (response_id, ingredient_key, owner_key, owner_account_id, owner_name, jira_issue_key, jira_issue_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+          [
+            resp.id,
+            effectiveIngKey.slice(0, 256),
+            ownerKey.slice(0, 128),
+            owner.ownerAccountId ?? null,
+            owner.ownerName.slice(0, 256),
+            sub.key,
+            sub.id,
+          ],
+        );
+        created.push(sub.key);
+      } catch (e) {
+        console.log(`[shortfall] syncOwnerTasks failed for ${owner.ownerName}: ${String(e)}`);
+      }
+    }
+  }
+
+  return { created, skippedExisting };
+}
+
+/**
  * Create at most one automatic Jira response (plus deduplicated per-owner
  * review tasks) per newly matched non-resolved ingredient so a multi-NDC
  * shortage never floods Jira with duplicate tickets.
@@ -702,7 +937,7 @@ export async function createResponsesForNewMatches(
   );
   const coveredIngredients = new Set(
     openResponses
-      .map((r) => baseIngredientName(r.ingredient ?? '').toLowerCase())
+      .map((r) => ingredientSignature(r.ingredient ?? ''))
       .filter(Boolean),
   );
 
@@ -720,7 +955,7 @@ export async function createResponsesForNewMatches(
     const row = rows[0];
     if (!row || !priorityForStatus(row.status)) continue;
 
-    const ingKey = baseIngredientName(row.generic_name ?? '').toLowerCase();
+    const ingKey = ingredientSignature(row.generic_name ?? '');
     if (ingKey && coveredIngredients.has(ingKey)) continue;
 
     const res = await createResponseForShortage(key);
@@ -770,14 +1005,14 @@ export async function closeSupersededResponses(
   );
   const activeIngredients = new Set(
     activeMatchedRows
-      .map((r) => baseIngredientName(r.generic_name ?? '').toLowerCase())
+      .map((r) => ingredientSignature(r.generic_name ?? ''))
       .filter(Boolean),
   );
 
   let closed = 0;
   for (const resp of openResponses) {
     if (activeMatchedKeys.has(resp.shortage_key)) continue;
-    const ingKey = baseIngredientName(resp.ingredient ?? '').toLowerCase();
+    const ingKey = ingredientSignature(resp.ingredient ?? '');
     if (ingKey && activeIngredients.has(ingKey)) continue;
     await execute(
       `UPDATE response SET state = 'superseded', resolved_at = NOW() WHERE id = ?`,
@@ -826,36 +1061,62 @@ async function processReversalsForResponse(
   response: { id: number; shortage_key: string; jira_issue_key: string | null },
   projectKey: string,
   errors: string[],
+  opts?: { asUser?: boolean },
 ): Promise<number> {
   let opened = 0;
-  const changes = await query<{ id: number; description: string }>(
-    `SELECT id, description FROM temporary_change WHERE response_id = ? AND state = 'open'`,
-    [response.id],
+  const [changes, shortageRows, impacts, storedSiteUrl] = await Promise.all([
+    query<{ id: number; description: string }>(
+      `SELECT id, description FROM temporary_change WHERE response_id = ? AND state = 'open'`,
+      [response.id],
+    ),
+    query<ShortageRow>(
+      `SELECT shortage_key, generic_name, presentation, status, package_ndc, availability, company_name, update_date
+       FROM shortage WHERE shortage_key = ? LIMIT 1`,
+      [response.shortage_key],
+    ),
+    query<ImpactOwnerRow>(
+      `SELECT kind, ref_id, title, url, owner_account_id, owner_name, team_name
+       FROM impact_item
+       WHERE shortage_key = ?
+         AND (kind != 'jira' OR (title NOT LIKE '[Shortage]%' AND title NOT LIKE '[Owner Review]%' AND title NOT LIKE '[Reversal]%'))
+       ORDER BY COALESCE(hop, 1), kind, title`,
+      [response.shortage_key],
+    ),
+    kvs.get('siteUrl') as Promise<string | undefined>,
+  ]);
+
+  const shortage = shortageRows[0] ?? null;
+  const siteUrl = storedSiteUrl ? String(storedSiteUrl).replace(/\/+$/, '') : undefined;
+  const firstHuman = impacts.find((i) => !isBotOwner(i.owner_name) && i.owner_account_id);
+  const isRealParent = Boolean(
+    response.jira_issue_key &&
+      !response.jira_issue_key.startsWith('SAMPLE-') &&
+      !response.jira_issue_key.startsWith('HIST-'),
   );
 
   for (const change of changes) {
     try {
+      const reversalAdf = buildReversalAdf(
+        change.description,
+        shortage,
+        impacts,
+        response.jira_issue_key,
+        siteUrl,
+      );
       const issue = await createJiraWorkItem(
         projectKey,
         `[Reversal] ${change.description}`,
-        [
-          'The related shortage is marked Resolved on the FDA drug shortages list.',
-          `Temporary change to reverse: ${change.description}`,
-          response.jira_issue_key ? `Original shortage response: ${response.jira_issue_key}` : '',
-          'Confirm reversal and verify the Confluence page notice has cleared.',
-          '',
-          `Disclaimer: ${OPENFDA_DISCLAIMER}`,
-        ]
-          .filter(Boolean)
-          .join('\n'),
+        change.description,
         {
-          assigneeAccountId: null,
+          assigneeAccountId: firstHuman?.owner_account_id ?? null,
           priority: 'Medium',
-          parentKey: response.jira_issue_key ?? undefined,
+          parentKey: isRealParent ? response.jira_issue_key ?? undefined : undefined,
+          asUser: opts?.asUser,
+          descriptionAdf: reversalAdf,
         },
       );
-      if (response.jira_issue_key && !response.jira_issue_key.startsWith('SAMPLE-')) {
-        await linkJiraIssues(issue.key, response.jira_issue_key);
+      if (isRealParent && response.jira_issue_key) {
+        await linkJiraIssues(issue.key, response.jira_issue_key, { asUser: opts?.asUser });
       }
       await execute(
         `UPDATE temporary_change SET reversal_issue_key = ?, state = 'reversal_open' WHERE id = ?`,

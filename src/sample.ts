@@ -3,9 +3,10 @@ import { kvs } from '@forge/kvs';
 import type { UpdateQueryResponse } from '@forge/sql';
 import { sql, query, execute } from './storage/schema';
 import { RxNavClient, mapWithConcurrency } from './rxnav';
-import { normalizeDrugName, stripSalts, normalizeNdc } from './match';
-import { FormularyItem } from './types';
+import { normalizeDrugName, stripSalts, normalizeNdc, matchShortages } from './match';
+import { FormularyItem, FdaShortageRecord, IngredientIndex } from './types';
 import { getSettings, saveSettings } from './settings';
+import { runImpactMapping } from './impact';
 
 /**
  * Sample hospital: creates realistic fictional content through the same
@@ -146,17 +147,20 @@ async function confluenceRequest(
   return api.asApp().requestConfluence(path, opts);
 }
 
-async function ensureSpace(): Promise<{ key: string; id: string }> {
+async function ensureSpace(): Promise<{ key: string; id: string; homepageId?: string }> {
   const list = await confluenceRequest(route`/wiki/api/v2/spaces?keys=${SPACE_KEY}`);
   const listBody = await list.text();
   console.log(`v2 spaces lookup: HTTP ${list.status} ${listBody.slice(0, 400)}`);
   if (list.ok) {
-    const data = JSON.parse(listBody) as { results?: { id: string; key: string }[] };
+    const data = JSON.parse(listBody) as {
+      results?: { id: string; key: string; homepageId?: string }[];
+    };
     const hit = data.results?.find((s) => s.key === SPACE_KEY) ?? data.results?.[0];
-    if (hit) return { key: SPACE_KEY, id: String(hit.id) };
+    if (hit) return { key: SPACE_KEY, id: String(hit.id), homepageId: hit.homepageId ? String(hit.homepageId) : undefined };
   }
   const res = await confluenceRequest(route`/wiki/rest/api/space`, {
     method: 'POST',
+    preferUser: true,
     body: JSON.stringify({
       key: SPACE_KEY,
       name: 'Sample Hospital',
@@ -169,8 +173,12 @@ async function ensureSpace(): Promise<{ key: string; id: string }> {
     }),
   });
   if (!res.ok) throw new Error(`space create failed: HTTP ${res.status} ${await res.text()}`);
-  const created = (await res.json()) as { id: number };
-  return { key: SPACE_KEY, id: String(created.id) };
+  const created = (await res.json()) as { id: number; homepage?: { id?: string } };
+  return {
+    key: SPACE_KEY,
+    id: String(created.id),
+    homepageId: created.homepage?.id ? String(created.homepage.id) : undefined,
+  };
 }
 
 async function listExistingPagesInSpace(
@@ -390,6 +398,7 @@ export async function loadSampleHospital(): Promise<{
   updatedPages: number;
   reusedPages: number;
   formularyCount: number;
+  mappedImpactPages: number;
   warnings?: string[];
 }> {
   const refs = await getRefs();
@@ -408,6 +417,28 @@ export async function loadSampleHospital(): Promise<{
   let reusedPages = 0;
 
   const existingPages = await listExistingPagesInSpace(space.id);
+
+  // Update "Sample Hospital Home" as the calling user so it isn't owned solely by the app bot.
+  if (space.homepageId) {
+    try {
+      const homeRes = await confluenceRequest(route`/wiki/api/v2/pages/${space.homepageId}`);
+      if (homeRes.ok) {
+        const homeData = (await homeRes.json()) as {
+          title?: string;
+          version?: { number?: number };
+        };
+        await updatePage(
+          space.homepageId,
+          Number(homeData.version?.number ?? 1),
+          homeData.title ?? 'Sample Hospital Home',
+          `<p>Fictional perioperative and ICU protocol library for demonstrating Shortfall drug shortage response inside Confluence and Jira. Contains no patient data.</p>`,
+        );
+      }
+    } catch {
+      // Best-effort homepage update.
+    }
+  }
+
   for (const page of SAMPLE_PAGES) {
     const existing = existingPages.get(page.title.trim().toLowerCase());
     if (existing) {
@@ -474,8 +505,100 @@ export async function loadSampleHospital(): Promise<{
   }
 
   await seedSampleHistoryAndReversal(refs);
-
   await kvs.set(KVS_KEY, refs);
+
+  // Immediately match against stored FDA shortages and scan the newly created
+  // SHOSP pages directly (zero CQL indexing lag) so Load never leaves impact at 0.
+  let mappedImpactPages = 0;
+  try {
+    const storedShortages = await query<{
+      shortage_key: string;
+      generic_name: string;
+      status: string;
+      presentation: string;
+      package_ndc: string;
+      dosage_form: string;
+      company_name: string;
+      openfda_json: string;
+    }>(
+      `SELECT shortage_key, generic_name, status, presentation, package_ndc, dosage_form, company_name, openfda_json FROM shortage`,
+    );
+    if (storedShortages.length > 0) {
+      const formularyRows = await query<{
+        id: string;
+        display_name: string;
+        ingredient_names: string;
+        ingredient_rxcuis: string;
+        package_ndcs: string;
+        dosage_forms: string;
+      }>(
+        `SELECT id, display_name, ingredient_names, ingredient_rxcuis, package_ndcs, dosage_forms FROM formulary_item WHERE active = 1`,
+      );
+      const formulary: FormularyItem[] = formularyRows.map((r) => ({
+        id: r.id,
+        displayName: r.display_name,
+        ingredientNames: JSON.parse(r.ingredient_names ?? '[]'),
+        ingredientRxcuis: JSON.parse(r.ingredient_rxcuis ?? '[]'),
+        packageNdcs: JSON.parse(r.package_ndcs ?? '[]'),
+        dosageForms: JSON.parse(r.dosage_forms ?? '[]'),
+      }));
+      const records: FdaShortageRecord[] = storedShortages.map((r) => ({
+        generic_name: r.generic_name,
+        status: r.status,
+        presentation: r.presentation,
+        package_ndc: r.package_ndc,
+        dosage_form: r.dosage_form,
+        company_name: r.company_name,
+        openfda: (() => {
+          try {
+            return JSON.parse(r.openfda_json ?? '{}');
+          } catch {
+            return {};
+          }
+        })(),
+      }));
+      // Use cached RxNav ingredient map only (no slow network calls on Load).
+      const index: IngredientIndex = new Map();
+      const rxcuis = new Set<string>();
+      for (const r of records) for (const c of r.openfda?.rxcui ?? []) rxcuis.add(c);
+      await mapWithConcurrency([...rxcuis], 10, async (c) => {
+        const cached = (await kvs.get(`rxnav:in:${c}`)) as { rxcui: string; name: string }[] | undefined;
+        if (cached) index.set(c, cached);
+      });
+      const matches = matchShortages(records, formulary, index);
+      const matchedKeys = new Set(matches.map((m) => m.shortageKey));
+      const activeMatches = await query<{ id: number; shortage_key: string; formulary_item_id: string }>(
+        `SELECT id, shortage_key, formulary_item_id FROM \`match\` WHERE superseded = 0`,
+      );
+      const activePairs = new Set(activeMatches.map((r) => `${r.shortage_key}|${r.formulary_item_id}`));
+      const wantedPairs = new Set(matches.map((m) => `${m.shortageKey}|${m.formularyItemId}`));
+      const staleIds = activeMatches
+        .filter((r) => !wantedPairs.has(`${r.shortage_key}|${r.formulary_item_id}`))
+        .map((r) => r.id);
+      if (staleIds.length > 0) {
+        const ph = staleIds.map(() => '?').join(',');
+        await execute(`UPDATE \`match\` SET superseded = 1 WHERE id IN (${ph})`, staleIds);
+      }
+      const toInsert = matches.filter((m) => !activePairs.has(`${m.shortageKey}|${m.formularyItemId}`));
+      for (let i = 0; i < toInsert.length; i += 50) {
+        const chunk = toInsert.slice(i, i + 50);
+        const ph = chunk.map(() => '(?, ?, ?, ?, NOW())').join(', ');
+        const params: unknown[] = [];
+        for (const m of chunk) {
+          params.push(m.shortageKey.slice(0, 64), m.formularyItemId.slice(0, 64), m.reason.slice(0, 32), m.detail.slice(0, 1024));
+        }
+        await execute(
+          `INSERT INTO \`match\` (shortage_key, formulary_item_id, reason, detail, created_at) VALUES ${ph}`,
+          params,
+        );
+      }
+      const impactRes = await runImpactMapping(matchedKeys, { impactDone: 0, impactTotal: matchedKeys.size });
+      mappedImpactPages = impactRes.pages;
+    }
+  } catch (e) {
+    console.log(`[shortfall] post-load impact scan skipped: ${String(e).slice(0, 160)}`);
+  }
+
   return {
     spaceKey: space.key,
     pageIds: refs.pageIds,
@@ -483,6 +606,7 @@ export async function loadSampleHospital(): Promise<{
     updatedPages,
     reusedPages,
     formularyCount: refs.formularyIds.length,
+    mappedImpactPages,
     warnings: warnings.length ? warnings : undefined,
   };
 }

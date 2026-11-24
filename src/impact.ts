@@ -96,6 +96,158 @@ export function searchTermsFor(shortage: ShortageRow): string[] {
   return [...byNorm.values()].slice(0, MAX_TERMS_PER_QUERY);
 }
 
+interface DirectPageRecord {
+  id: string;
+  title: string;
+  spaceKey: string;
+  url: string;
+  plainText: string;
+  ownerAccountId?: string;
+  ownerName?: string;
+}
+
+function stripStorageHtml(xml: string): string {
+  return xml
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function textMatchesAnyTerm(plainText: string, terms: string[]): boolean {
+  if (!plainText || !terms.length) return false;
+  for (const term of terms) {
+    const clean = term.trim();
+    if (clean.length < 3) continue;
+    const re = new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(clean)}(?:$|[^a-z0-9])`, 'i');
+    if (re.test(plainText)) return true;
+  }
+  return false;
+}
+
+/**
+ * Directly read pages (with storage bodies) in selected clinical spaces via
+ * Confluence v2 Pages API. Eliminates CQL search indexing lag completely so
+ * freshly created pages are mapped immediately on Load / Sync.
+ */
+async function loadClinicalSpacePagesDirectly(spaceKeys: string[]): Promise<{
+  pages: DirectPageRecord[];
+  livePageIdsBySpace: Map<string, Set<string>>;
+  error?: string;
+}> {
+  const pages: DirectPageRecord[] = [];
+  const livePageIdsBySpace = new Map<string, Set<string>>();
+  const userCache = new Map<string, { name: string; accountId: string } | null>();
+
+  const lookupHuman = async (accountId?: string): Promise<{ name: string; accountId: string } | null> => {
+    if (!accountId) return null;
+    if (userCache.has(accountId)) return userCache.get(accountId) ?? null;
+    try {
+      const res = await api
+        .asApp()
+        .requestConfluence(route`/wiki/rest/api/user?accountId=${accountId}`, {
+          headers: { Accept: 'application/json' },
+        });
+      if (res.ok) {
+        const u = (await res.json()) as {
+          displayName?: string;
+          publicName?: string;
+          accountType?: string;
+        };
+        const name = (u.displayName ?? u.publicName ?? '').trim();
+        if (!isAppAccount(u.accountType, name)) {
+          const hit = { name, accountId };
+          userCache.set(accountId, hit);
+          return hit;
+        }
+      }
+    } catch {
+      // Ignore user lookup failure.
+    }
+    userCache.set(accountId, null);
+    return null;
+  };
+
+  for (const rawKey of spaceKeys) {
+    const spaceKey = rawKey.trim();
+    if (!spaceKey) continue;
+    try {
+      const spRes = await api
+        .asApp()
+        .requestConfluence(route`/wiki/api/v2/spaces?keys=${spaceKey}`, {
+          headers: { Accept: 'application/json' },
+        });
+      if (!spRes.ok) continue;
+      const spBody = (await spRes.json()) as {
+        results?: { id?: string; key?: string; homepageId?: string }[];
+      };
+      const space = spBody.results?.find((s) => s.key === spaceKey) ?? spBody.results?.[0];
+      if (!space?.id) continue;
+
+      const pgRes = await api
+        .asApp()
+        .requestConfluence(
+          route`/wiki/api/v2/spaces/${space.id}/pages?limit=100&body-format=storage`,
+          { headers: { Accept: 'application/json' } },
+        );
+      if (!pgRes.ok) continue;
+      const pgBody = (await pgRes.json()) as {
+        results?: {
+          id?: string;
+          title?: string;
+          status?: string;
+          ownerId?: string;
+          authorId?: string;
+          version?: { authorId?: string };
+          _links?: { webui?: string };
+          body?: { storage?: { value?: string } };
+        }[];
+      };
+
+      const liveIds = new Set<string>();
+      for (const p of pgBody.results ?? []) {
+        if (!p.id || (p.status && p.status !== 'current')) continue;
+        const pageId = String(p.id);
+        liveIds.add(pageId);
+        // Skip the space homepage itself (e.g. "Sample Hospital Home").
+        if (space.homepageId && pageId === String(space.homepageId)) continue;
+
+        const candidates = [p.ownerId, p.authorId, p.version?.authorId].filter(Boolean) as string[];
+        let human: { name: string; accountId: string } | null = null;
+        for (const cid of [...new Set(candidates)]) {
+          human = await lookupHuman(cid);
+          if (human) break;
+        }
+
+        const storageXml = p.body?.storage?.value ?? '';
+        const plainText = `${p.title ?? ''} ${stripStorageHtml(storageXml)}`.trim();
+        pages.push({
+          id: pageId,
+          title: p.title ?? `Page ${pageId}`,
+          spaceKey,
+          url: normalizeConfluenceUrl(p._links?.webui ?? `/wiki/pages/viewpage.action?pageId=${pageId}`),
+          plainText,
+          ownerAccountId: human?.accountId,
+          ownerName: human?.name,
+        });
+      }
+      livePageIdsBySpace.set(spaceKey, liveIds);
+    } catch {
+      // Fall back cleanly to CQL for this space if v2 scan fails.
+    }
+  }
+
+  return { pages, livePageIdsBySpace };
+}
+
 function isAppAccount(accountType?: string, displayName?: string): boolean {
   if (accountType === 'app') return true;
   const n = (displayName ?? '').trim().toLowerCase();
@@ -334,9 +486,35 @@ export async function runImpactMapping(
     );
   }
 
-  const seen = new Set(active.map((r) => `${r.shortage_key}|${r.kind}|${r.ref_id}`));
+  // Direct Confluence v2 page-body scan for configured clinical spaces (zero CQL indexing lag).
+  const directScan =
+    settings.clinicalSpaceKeys.length > 0
+      ? await loadClinicalSpacePagesDirectly(settings.clinicalSpaceKeys)
+      : { pages: [], livePageIdsBySpace: new Map<string, Set<string>>() };
+
+  // Prune any impact_item rows referencing deleted Confluence page IDs in scanned spaces.
+  const staleDeletedPageIds = new Set<string>();
+  for (const r of active) {
+    if (r.kind !== 'page' || !r.space_key) continue;
+    const liveIds = directScan.livePageIdsBySpace.get(r.space_key);
+    if (liveIds && !liveIds.has(r.ref_id)) {
+      staleDeletedPageIds.add(r.ref_id);
+    }
+  }
+  if (staleDeletedPageIds.size > 0) {
+    const ids = [...staleDeletedPageIds];
+    const ph = ids.map(() => '?').join(',');
+    await execute(`DELETE FROM impact_item WHERE kind = 'page' AND ref_id IN (${ph})`, ids);
+  }
+
+  const seen = new Set(
+    active
+      .filter((r) => !(r.kind === 'page' && staleDeletedPageIds.has(r.ref_id)))
+      .map((r) => `${r.shortage_key}|${r.kind}|${r.ref_id}`),
+  );
   const existingOwnerByRef = new Map<string, string>();
   for (const r of active) {
+    if (r.kind === 'page' && staleDeletedPageIds.has(r.ref_id)) continue;
     if (r.owner_name && r.owner_name.trim().toLowerCase() !== 'shortfall') {
       existingOwnerByRef.set(`${r.kind}|${r.ref_id}`, r.owner_name);
     }
@@ -363,8 +541,24 @@ export async function runImpactMapping(
   const ownerUpdates = new Map<string, { kind: string; refId: string; ownerAccountId: string | null; ownerName: string }>();
 
   for (const group of groups.values()) {
+    const directHits: DiscoveredItem[] = directScan.pages
+      .filter((p) => textMatchesAnyTerm(p.plainText, group.terms))
+      .map((p) => ({
+        kind: 'page',
+        refId: p.id,
+        title: p.title,
+        url: p.url,
+        ownerAccountId: p.ownerAccountId,
+        ownerName: p.ownerName,
+        spaceKey: p.spaceKey,
+        foundVia: 'confluence-page-scan',
+      }));
+
+    // Use CQL only if no clinical spaces were scanned directly via v2.
     const [conf, jira] = await Promise.all([
-      searchConfluence(group.terms, settings.clinicalSpaceKeys),
+      directScan.livePageIdsBySpace.size > 0
+        ? Promise.resolve({ items: directHits, error: undefined as string | undefined })
+        : searchConfluence(group.terms, settings.clinicalSpaceKeys),
       searchJira(group.terms, settings.responseProjectKey, responseKeys),
     ]);
     if (conf.error) missing.push(`confluence: ${conf.error}`);

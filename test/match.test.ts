@@ -220,7 +220,7 @@ describe('matchShortages', () => {
     expect(matchShortages(cefazolin, formulary, INDEX)).toHaveLength(0);
   });
 
-  it('matches combination shortage to single-ingredient formulary items', () => {
+  it('does not match a combination shortage to single-ingredient formulary items', () => {
     const formulary = [
       item({
         id: 'bupivacaine',
@@ -236,8 +236,7 @@ describe('matchShortages', () => {
       }),
     ];
     const matches = matchShortages([combo], formulary, INDEX);
-    const ids = new Set(matches.map((m) => m.formularyItemId));
-    expect(ids).toEqual(new Set(['bupivacaine', 'epinephrine']));
+    expect(matches).toHaveLength(0);
   });
 
   it('requires ALL ingredients for combination formulary items in RxNorm matching', () => {
@@ -273,12 +272,62 @@ describe('matchShortages', () => {
     ];
     const matches = matchShortages([combo], formulary, INDEX);
     const ids = new Set(matches.map((m) => m.formularyItemId));
-    expect(ids).toEqual(new Set(['bupi-epi', 'bupivacaine-only']));
+    // Strict symmetry: combo presentation matches ONLY the exact same combo, not single-ingredient bupivacaine.
+    expect(ids).toEqual(new Set(['bupi-epi']));
+    expect(ids).not.toContain('bupivacaine-only');
     expect(ids).not.toContain('lido-epi');
     expect(ids).not.toContain('lido-epi-partial-rxcui');
   });
 
-  it('requires ALL ingredients for combination formulary items in name fallback', () => {
+  it('enforces strict single-vs-combination symmetry in both directions (plain bupivacaine vs bupi+epi combo)', () => {
+    const plainBupiRecord: FdaShortageRecord = {
+      generic_name: 'Bupivacaine Hydrochloride Injection',
+      presentation: 'Sensorcaine, Injection, 0.5% (NDC 63323-472-17)',
+      package_ndc: '63323-472-17',
+      dosage_form: 'Injection',
+      status: 'Current',
+      // Simulate real FDA SPL family contamination where openfda.rxcui includes sibling combo rxcuis.
+      openfda: {
+        generic_name: ['BUPIVACAINE HYDROCHLORIDE'],
+        brand_name: ['SENSORCAINE'],
+        rxcui: ['1732186', ...combo.openfda!.rxcui!],
+      },
+    };
+    const comboItem = item({
+      id: 'bupi-epi',
+      displayName: 'bupivacaine HCl/epinephrine injection',
+      ingredientNames: ['bupivacaine', 'epinephrine'],
+      ingredientRxcuis: ['3640', '3992'],
+      dosageForms: ['injection'],
+    });
+    const plainItem = item({
+      id: 'bupi-plain',
+      displayName: 'bupivacaine HCl injection',
+      ingredientNames: ['bupivacaine'],
+      ingredientRxcuis: ['3640'],
+      dosageForms: ['injection'],
+    });
+    const epiOnlyItem = item({
+      id: 'epi-plain',
+      displayName: 'epinephrine injection',
+      ingredientNames: ['epinephrine'],
+      ingredientRxcuis: ['3992'],
+      dosageForms: ['injection'],
+    });
+
+    const idxWithPlain = new Map(INDEX);
+    idxWithPlain.set('1732186', [{ rxcui: '3640', name: 'bupivacaine' }]);
+
+    // Direction 1: plain bupivacaine MUST match ONLY plain bupivacaine (never bupi+epi combo).
+    const plainMatches = matchShortages([plainBupiRecord], [comboItem, plainItem, epiOnlyItem], idxWithPlain);
+    expect(plainMatches.map((m) => m.formularyItemId)).toEqual(['bupi-plain']);
+
+    // Direction 2: bupi+epi combo MUST match ONLY bupi+epi combo (never plain bupivacaine or plain epinephrine).
+    const comboMatches = matchShortages([combo], [comboItem, plainItem, epiOnlyItem], idxWithPlain);
+    expect(comboMatches.map((m) => m.formularyItemId)).toEqual(['bupi-epi']);
+  });
+
+  it('requires ALL ingredients for combination formulary items in name fallback (strict symmetry)', () => {
     const comboNoOpenfda: FdaShortageRecord = {
       ...combo,
       package_ndc: undefined,
@@ -306,7 +355,8 @@ describe('matchShortages', () => {
     ];
     const matches = matchShortages([comboNoOpenfda], formulary, INDEX);
     const ids = new Set(matches.map((m) => m.formularyItemId));
-    expect(ids).toEqual(new Set(['bupi-epi', 'bupivacaine-only']));
+    expect(ids).toEqual(new Set(['bupi-epi']));
+    expect(ids).not.toContain('bupivacaine-only');
     expect(ids).not.toContain('lido-epi');
     expect(matches.every((m) => m.reason === 'ingredient_name')).toBe(true);
   });
@@ -381,13 +431,16 @@ describe('matchShortages', () => {
     expect(matches.filter((m) => m.reason !== 'ingredient_name')).toHaveLength(0);
   });
 
-  it('brand names on the record can match a generic formulary entry', () => {
+  it('brand names on a single-ingredient record can match a single-ingredient formulary entry', () => {
+    const plainBrandRecord: FdaShortageRecord = {
+      generic_name: 'Bupivacaine Hydrochloride Injection',
+      dosage_form: 'Injection',
+      openfda: { brand_name: ['SENSORCAINE MPF'] },
+    };
     const formulary = [
       item({ ingredientNames: ['sensorcaine'], dosageForms: [] }),
     ];
-    const matches = matchShortages([combo], formulary, INDEX);
-    // brand_name SENSORCAINE MPF -> "sensorcaine mpf"; item ingredient
-    // "sensorcaine" matches on word boundary -> name match.
+    const matches = matchShortages([plainBrandRecord], formulary, INDEX);
     expect(matches.some((m) => m.reason === 'ingredient_name')).toBe(true);
   });
 

@@ -152,6 +152,51 @@ export function candidateNames(record: FdaShortageRecord): string[] {
   return [...names];
 }
 
+const DILUENT_INGREDIENTS = new Set([
+  'dextrose',
+  'water',
+  'sterile water',
+  'sodium chloride',
+  'normal saline',
+  'saline',
+  'lactated ringer',
+  'lactated ringers',
+  'ringer',
+]);
+
+/**
+ * Parse the shortage record's own declared active ingredients from its
+ * `generic_name` (ignoring sibling-product contamination in `openfda.rxcui`
+ * and stripping IV diluents like dextrose / sodium chloride when paired with
+ * an active drug).
+ */
+export function recordDeclaredIngredients(record: FdaShortageRecord): string[] {
+  const raw = (record.generic_name ?? '').trim();
+  if (!raw) return [];
+  // Strip trailing "in <diluent>" phrases (e.g. "Cefazolin in Dextrose Injection").
+  const withoutInDiluent = raw
+    .replace(/\bin\s+(?:dextrose|sodium\s+chloride|water|normal\s+saline|lactated\s+ringer'?s?)\b[^,;\/]*/gi, ' ')
+    .replace(/\bwith\s+preservatives?\b/gi, ' ')
+    .replace(/\bpreservative[\s-]free\b/gi, ' ');
+
+  const parts = withoutInDiluent
+    .split(/[,\/;]|\band\b|\bwith\b/i)
+    .map((p) => baseIngredientName(p))
+    .map(normalizeIngredientKey)
+    .filter((p) => p.length > 1);
+
+  const unique = [...new Set(parts)];
+  const nonDiluents = unique.filter((p) => !DILUENT_INGREDIENTS.has(p));
+  return nonDiluents.length > 0 ? nonDiluents : unique;
+}
+
+/** Canonical sorted active-ingredient signature (e.g. "bupivacaine" vs "bupivacaine+epinephrine"). */
+export function ingredientSignature(genericName?: string | null): string {
+  const parts = recordDeclaredIngredients({ generic_name: genericName ?? '' });
+  if (parts.length > 0) return [...parts].sort().join('+');
+  return baseIngredientName(genericName ?? '').toLowerCase();
+}
+
 /** Ingredient refs for every rxcui on the record, from the provided index. */
 export function recordIngredients(
   record: FdaShortageRecord,
@@ -161,7 +206,20 @@ export function recordIngredients(
   for (const rxcui of record.openfda?.rxcui ?? []) {
     for (const ref of index.get(rxcui) ?? []) found.set(ref.rxcui, ref.name);
   }
-  return [...found.entries()].map(([rxcui, name]) => ({ rxcui, name }));
+  const all = [...found.entries()].map(([rxcui, name]) => ({ rxcui, name }));
+  // Guard against FDA openfda.rxcui product-family contamination (e.g. plain
+  // bupivacaine carrying a sibling bupivacaine+epinephrine rxcui from the same SPL).
+  const declared = recordDeclaredIngredients(record);
+  if (declared.length > 0 && all.length > declared.length) {
+    const filtered = all.filter((ref) => {
+      const norm = normalizeIngredientKey(ref.name);
+      return declared.some(
+        (d) => norm === d || matchesIngredientToken(norm, d) || matchesIngredientToken(d, norm),
+      );
+    });
+    if (filtered.length > 0) return filtered;
+  }
+  return all;
 }
 
 function dosageFormCompatible(record: FdaShortageRecord, item: FormularyItem): boolean {
@@ -223,10 +281,13 @@ export function matchShortages(
     if (ndcMatched) continue;
 
     // 2. RxNorm ingredient + dosage form.
-    // Combination formulary items (multiple ingredients) must match ALL of
-    // their ingredients against the record; single-ingredient items match any
-    // record containing that ingredient.
+    // Strict single-vs-combination symmetry: a single-ingredient presentation
+    // matches ONLY a single-ingredient formulary item, and a combination
+    // presentation matches ONLY a combination formulary item with the exact
+    // same active ingredient set.
+    const declared = recordDeclaredIngredients(record);
     const ingredients = recordIngredients(record, ingredientIndex);
+    const recIngredientCount = declared.length > 0 ? declared.length : ingredients.length;
     let ingredientMatched = false;
     if (ingredients.length > 0) {
       const recByRxcui = new Map(ingredients.map((ing) => [ing.rxcui, ing]));
@@ -240,7 +301,9 @@ export function matchShortages(
         const itemNames = [
           ...new Set(item.ingredientNames.map(normalizeIngredientKey).filter(Boolean)),
         ];
-        if (itemRxcuis.length === 0 && itemNames.length === 0) continue;
+        const itemCount = Math.max(itemRxcuis.length, itemNames.length);
+        if (itemCount === 0) continue;
+        if (recIngredientCount > 0 && itemCount !== recIngredientCount) continue;
 
         let matchedRefs: { rxcui: string; name: string }[] | null = null;
         if (
@@ -257,7 +320,7 @@ export function matchShortages(
           matchedRefs = itemNames.map((n) => recByBaseName.get(n)!);
         }
 
-        if (matchedRefs && matchedRefs.length > 0) {
+        if (matchedRefs && matchedRefs.length === itemCount) {
           const desc =
             matchedRefs.length === 1
               ? `RxNorm ingredient ${matchedRefs[0].name} (${matchedRefs[0].rxcui}) matches`
@@ -275,7 +338,7 @@ export function matchShortages(
     if (ingredientMatched) continue;
 
     // 3. Name fallback (empty openfda, unmapped rxcuis). Salts stripped,
-    // whole-word boundaries, and combination items must match every ingredient.
+    // whole-word boundaries, and strict single-vs-combination symmetry.
     const candidates = candidateNames(record).map((name) => ({
       name,
       base: normalizeIngredientKey(name),
@@ -286,16 +349,25 @@ export function matchShortages(
       ];
       if (itemNames.length === 0) continue;
       if (!dosageFormCompatible(record, item)) continue;
+      if (declared.length > 0 && itemNames.length !== declared.length) continue;
 
       const matchedNames: string[] = [];
       let allMatched = true;
       for (const needle of itemNames) {
-        const hit = candidates.find((c) => matchesIngredientToken(c.base, needle));
-        if (!hit) {
+        const hit =
+          declared.length > 0
+            ? declared.find((d) => d === needle || matchesIngredientToken(d, needle))
+            : candidates.find((c) => matchesIngredientToken(c.base, needle))?.name;
+        const brandHit =
+          hit ??
+          (declared.length === itemNames.length
+            ? candidates.find((c) => matchesIngredientToken(c.base, needle))?.name
+            : undefined);
+        if (!brandHit) {
           allMatched = false;
           break;
         }
-        if (!matchedNames.includes(hit.name)) matchedNames.push(hit.name);
+        if (!matchedNames.includes(brandHit)) matchedNames.push(brandHit);
       }
 
       if (allMatched) {

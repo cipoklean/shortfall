@@ -279,6 +279,7 @@ vi.mock('../src/storage/schema', () => ({
 import {
   priorityForStatus,
   buildResponseAdf,
+  buildReversalAdf,
   createResponseForShortage,
   createResponsesForNewMatches,
   closeSupersededResponses,
@@ -547,5 +548,40 @@ describe('respond — priority, ADF links, per-ingredient cap, owner-task dedup,
     expect(dry.breakdown).toEqual({ shortage: 1, ownerReview: 1, reversal: 0 });
     expect(dry.matchedIssues.map((i) => i.key)).toEqual(['PROC-141', 'PROC-392']);
     expect(mockState.deletedIssues).toHaveLength(0);
+  });
+
+  it('builds rich clickable reversal ADF with Confluence page link and honest sample attribution (no fake SAMPLE-REV-BUM key)', () => {
+    const adf = buildReversalAdf(
+      'Remove temporary IV bumetanide vial conservation alert',
+      {
+        shortage_key: 'ndc:72205010207',
+        generic_name: 'Bumetanide Injection',
+        presentation: 'Bumetanide 0.25 mg/mL',
+        status: 'Resolved',
+        package_ndc: '72205-102-07',
+        availability: 'Available',
+        company_name: 'Avenacy',
+        update_date: '11/01/2026',
+      },
+      [
+        {
+          kind: 'page',
+          ref_id: '6881281',
+          title: 'ICU diuretic protocol — loop diuretic infusions',
+          url: '/wiki/spaces/SHOSP/pages/6881281',
+          owner_account_id: '712020:human-1',
+          owner_name: 'aghazie david',
+          team_name: null,
+        },
+      ],
+      'SAMPLE-REV-BUM',
+      'https://one-atlas-ojjg.atlassian.net',
+    );
+    const jsonStr = JSON.stringify(adf);
+    expect(jsonStr).toContain('https://one-atlas-ojjg.atlassian.net/wiki/spaces/SHOSP/pages/6881281');
+    expect(jsonStr).toContain('Sample hospital demonstration data');
+    expect(jsonStr).not.toContain('SAMPLE-REV-BUM');
+    expect(jsonStr).toContain(FDA_HUMAN_SHORTAGES_URL);
+    expect(jsonStr).toContain('openFDA record (raw data)');
   });
 });

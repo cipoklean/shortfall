@@ -21,6 +21,7 @@ import {
   createResponsesForNewMatches,
   openReversalTasks,
   closeSupersededResponses,
+  syncOwnerTasksForOpenResponses,
 } from './respond';
 
 const syncQueue = new Queue({ key: 'sync-queue' });
@@ -432,6 +433,9 @@ export async function runSyncJob(kind: string): Promise<void> {
     const responseResult = settings.autoCreateResponses
       ? await createResponsesForNewMatches([...matchedKeys])
       : { created: 0, skipped: 'auto-create disabled' };
+    const ownerTaskResult = settings.autoCreateResponses
+      ? await syncOwnerTasksForOpenResponses()
+      : { created: [], skippedExisting: 0 };
     const reversalResult = await openReversalTasks(resolvedKeys);
 
     // Single aggregate query for EVIDENCE logging (replaces 6 separate COUNT queries).
@@ -464,6 +468,7 @@ export async function runSyncJob(kind: string): Promise<void> {
       matched: matches.length,
       impact: impactResult,
       responses: responseResult,
+      ownerTasks: ownerTaskResult,
       supersededResponses,
       reversals: reversalResult,
       sqlStatements,

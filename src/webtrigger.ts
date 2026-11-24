@@ -11,6 +11,7 @@ import {
   createResponseForShortage,
   openReversalTasksForResolvedResponses,
   cleanupShortfallProcIssues,
+  syncOwnerTasksForOpenResponses,
 } from './respond';
 import { actionGetActiveShortages, actionGetReversalChecklist } from './actions';
 import { saveSettings } from './settings';
@@ -107,6 +108,8 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
     }
     case 'reversals':
       return json(200, await openReversalTasksForResolvedResponses());
+    case 'sync-owner-tasks':
+      return json(200, await syncOwnerTasksForOpenResponses());
     case 'cleanup-shortfall': {
       const confirm = req.queryParameters?.confirm?.[0] === '1';
       const projectKey = req.queryParameters?.project?.[0];
@@ -293,6 +296,14 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
         )
       )[0]?.n ?? 0;
 
+    const plainBupiMatches = await query<{ shortage_key: string; generic_name: string; display_name: string }>(
+      `SELECT s.shortage_key, s.generic_name, f.display_name
+       FROM \`match\` m
+       JOIN shortage s ON s.shortage_key = m.shortage_key
+       JOIN formulary_item f ON f.id = m.formulary_item_id
+       WHERE m.superseded = 0 AND s.shortage_key = 'ndc:63323047217'`,
+    );
+
     audit = {
       totalProcIssues: totalProc,
       preservedNonShortfallProcIssues: totalProc - procIssues.length,
@@ -300,6 +311,7 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
       procImpactRowsCount: Number(procImpactCount),
       shospPages,
       matchedTabCount: Number(matchedTabCount),
+      plainBupi63323_472_17Matches: plainBupiMatches,
     };
   }
 

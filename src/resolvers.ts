@@ -18,10 +18,12 @@ import {
   normalizeNdc,
   fdaSourceUrl,
   baseIngredientName,
+  ingredientSignature,
 } from './match';
 import {
   createResponseForShortage,
   createOwnerTasksForResponse,
+  syncOwnerTasksForOpenResponses,
   recordTemporaryChange,
   markTemporaryChangeReversed,
   openReversalTasksForResolvedResponses,
@@ -140,18 +142,20 @@ export async function computeDashboardMetrics() {
   }
   const impactWhere = impactWhereParts.join(' AND ');
 
-  // 1. Single aggregate query for ALL 10 scalar KPIs (replaces 10 separate queries).
+  // 1. Single aggregate query for ALL scalar KPIs.
+  //    2nd-hop strictly excludes items already directly impacted (hop = 1) so
+  //    total === direct + linked2ndHop with zero overlap discrepancy.
   const scalarSql = `SELECT
     (SELECT COUNT(DISTINCT s.shortage_key) FROM shortage s JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0 WHERE s.status = 'Current') AS activeMatched,
     (SELECT COUNT(DISTINCT s.shortage_key) FROM shortage s JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0 WHERE s.status = 'To Be Discontinued') AS discontinuedMatched,
     (SELECT COUNT(DISTINCT s.shortage_key) FROM shortage s JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0 WHERE s.status = 'Resolved') AS resolvedMatched,
     (SELECT COUNT(*) FROM formulary_item WHERE active = 1) AS formularyCount,
-    (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere}) AS impactItems,
     (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere} AND COALESCE(hop, 1) = 1) AS directImpactItems,
-    (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere} AND hop = 2) AS linkedImpactItems,
+    (SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) FROM impact_item WHERE ${impactWhere} AND hop = 2 AND CONCAT(kind, ':', ref_id) NOT IN (SELECT CONCAT(kind, ':', ref_id) FROM impact_item WHERE ${impactWhere} AND COALESCE(hop, 1) = 1)) AS linkedImpactItems,
     (SELECT COUNT(DISTINCT r.jira_issue_key) FROM response r LEFT JOIN shortage s ON s.shortage_key = r.shortage_key WHERE COALESCE(r.state, 'open') = 'open' AND r.jira_issue_key IS NOT NULL AND r.jira_issue_key NOT LIKE 'SAMPLE-%' AND r.jira_issue_key NOT LIKE 'HIST-%' AND COALESCE(s.status, 'Current') != 'Resolved') AS openResponses,
     (SELECT COUNT(*) FROM temporary_change WHERE state IN ('open', 'reversal_open')) AS openTemporaryChanges,
-    (SELECT COUNT(*) FROM temporary_change tc JOIN response r ON r.id = tc.response_id JOIN shortage s ON s.shortage_key = r.shortage_key WHERE s.status = 'Resolved' AND tc.state = 'open') AS reversalsDue`;
+    (SELECT COUNT(*) FROM temporary_change tc JOIN response r ON r.id = tc.response_id JOIN shortage s ON s.shortage_key = r.shortage_key WHERE s.status = 'Resolved' AND tc.state = 'open') AS reversalsDue,
+    (SELECT COUNT(*) FROM temporary_change WHERE state = 'reversal_open') AS reversalsInProgress`;
   const scalarParams = [...impactParams, ...impactParams, ...impactParams];
 
   // 2. Single combined exposure query (clinical Confluence spaces + non-response Jira projects).
@@ -185,39 +189,55 @@ export async function computeDashboardMetrics() {
       discontinuedMatched: number;
       resolvedMatched: number;
       formularyCount: number;
-      impactItems: number;
       directImpactItems: number;
       linkedImpactItems: number;
       openResponses: number;
       openTemporaryChanges: number;
       reversalsDue: number;
+      reversalsInProgress: number;
     }>(scalarSql, scalarParams),
     query<{ spaceKey: string; count: number; kind: 'space' | 'jira' }>(exposureSql, exposureParams),
   ]);
 
   const s = scalarRows[0];
   const openResponses = Number(s?.openResponses ?? 0);
+  const reversalsInProgress = Number(s?.reversalsInProgress ?? 0);
 
-  // 3. Only run response-timing query when open responses exist.
+  // Measure median response latency from Shortfall's first sighting / match to
+  // response creation (NOT from FDA's years-old initial posting date).
   let medianResponseHours: number | null = null;
-  if (openResponses > 0) {
-    const timingRows = await query<{
-      opened_at: string | Date | null;
-      initial_posting_date: string | null;
-    }>(
-      `SELECT r.opened_at, s.initial_posting_date
-       FROM response r
-       JOIN shortage s ON s.shortage_key = r.shortage_key
-       WHERE r.opened_at IS NOT NULL
-         AND s.initial_posting_date IS NOT NULL
-         AND r.jira_issue_key NOT LIKE 'SAMPLE-%'`,
-    );
+  let reversalsInProgressKeys: string[] = [];
+  if (openResponses > 0 || reversalsInProgress > 0) {
+    const [timingRows, revKeyRows] = await Promise.all([
+      openResponses > 0
+        ? query<{ opened_at: string | Date | null; detected_at: string | Date | null }>(
+            `SELECT r.opened_at,
+                    COALESCE(MIN(m.created_at), s.first_seen) AS detected_at
+             FROM response r
+             JOIN shortage s ON s.shortage_key = r.shortage_key
+             LEFT JOIN \`match\` m ON m.shortage_key = r.shortage_key
+             WHERE r.opened_at IS NOT NULL
+               AND COALESCE(r.state, 'open') = 'open'
+               AND r.jira_issue_key NOT LIKE 'SAMPLE-%'
+               AND r.jira_issue_key NOT LIKE 'HIST-%'
+             GROUP BY r.id, r.opened_at, s.first_seen`,
+          )
+        : Promise.resolve([]),
+      reversalsInProgress > 0
+        ? query<{ reversal_issue_key: string }>(
+            `SELECT reversal_issue_key
+             FROM temporary_change
+             WHERE state = 'reversal_open' AND reversal_issue_key IS NOT NULL`,
+          )
+        : Promise.resolve([]),
+    ]);
+    reversalsInProgressKeys = revKeyRows.map((r) => r.reversal_issue_key);
     const hours: number[] = [];
     for (const row of timingRows) {
       const opened = parseDateMs(row.opened_at);
-      const posted = parseDateMs(row.initial_posting_date);
-      if (opened !== null && posted !== null) {
-        const diff = (opened - posted) / 3_600_000;
+      const detected = parseDateMs(row.detected_at);
+      if (opened !== null && detected !== null) {
+        const diff = (opened - detected) / 3_600_000;
         if (Number.isFinite(diff) && diff >= 0) hours.push(diff);
       }
     }
@@ -232,6 +252,8 @@ export async function computeDashboardMetrics() {
   const activeMatched = Number(s?.activeMatched ?? 0);
   const discontinuedMatched = Number(s?.discontinuedMatched ?? 0);
   const resolvedMatched = Number(s?.resolvedMatched ?? 0);
+  const directImpactItems = Number(s?.directImpactItems ?? 0);
+  const linkedImpactItems = Number(s?.linkedImpactItems ?? 0);
 
   return {
     settings,
@@ -240,12 +262,14 @@ export async function computeDashboardMetrics() {
     resolvedMatched,
     totalMatched: activeMatched + discontinuedMatched + resolvedMatched,
     formularyCount: Number(s?.formularyCount ?? 0),
-    impactItems: Number(s?.impactItems ?? 0),
-    directImpactItems: Number(s?.directImpactItems ?? 0),
-    linkedImpactItems: Number(s?.linkedImpactItems ?? 0),
+    impactItems: directImpactItems + linkedImpactItems,
+    directImpactItems,
+    linkedImpactItems,
     openResponses,
     openTemporaryChanges: Number(s?.openTemporaryChanges ?? 0),
     reversalsDue: Number(s?.reversalsDue ?? 0),
+    reversalsInProgress,
+    reversalsInProgressKeys,
     exposureBySpace: exposureRows
       .filter((r) => r.spaceKey && Number(r.count ?? 0) > 0)
       .map((r) => ({
@@ -306,6 +330,8 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
     openResponses: metrics.openResponses,
     openTemporaryChanges: metrics.openTemporaryChanges,
     reversalsDue: metrics.reversalsDue,
+    reversalsInProgress: metrics.reversalsInProgress,
+    reversalsInProgressKeys: metrics.reversalsInProgressKeys,
     exposureBySpace: metrics.exposureBySpace,
     medianResponseHours: metrics.medianResponseHours,
     settings: metrics.settings,
@@ -472,79 +498,105 @@ resolver.define('startSync', async ({ context }: { context?: ReqContext }) => {
   return enqueueSync('manual');
 });
 
-/** Matched shortages for the dashboard (joined to formulary, response, and impact counts). */
+/** Matched shortages for the dashboard (joined to formulary, ingredient-level response, and impact counts). */
 resolver.define('getMatchedShortages', async () => {
   await runMigrations();
-  const rows = await query<{
-    shortage_key: string;
-    generic_name: string;
-    status: string;
-    package_ndc: string;
-    presentation: string;
-    dosage_form: string;
-    company_name: string;
-    update_date: string;
-    initial_posting_date: string;
-    reason: string;
-    display_name: string;
-    impact_count: number | null;
-    jira_issue_key: string | null;
-    response_state: string | null;
-  }>(
-    `SELECT s.shortage_key,
-            MAX(s.generic_name) AS generic_name,
-            MAX(s.status) AS status,
-            MAX(s.package_ndc) AS package_ndc,
-            MAX(s.presentation) AS presentation,
-            MAX(s.dosage_form) AS dosage_form,
-            MAX(s.company_name) AS company_name,
-            MAX(s.update_date) AS update_date,
-            MAX(s.initial_posting_date) AS initial_posting_date,
-            MIN(m.reason) AS reason,
-            MIN(f.display_name) AS display_name,
-            COALESCE(MAX(ic.impact_count), 0) AS impact_count,
-            MAX(r.jira_issue_key) AS jira_issue_key,
-            MAX(r.state) AS response_state
-     FROM \`match\` m
-     JOIN shortage s ON s.shortage_key = m.shortage_key
-     JOIN formulary_item f ON f.id = m.formulary_item_id
-     LEFT JOIN (
-       SELECT shortage_key, COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS impact_count
-       FROM impact_item
-       WHERE kind != 'jira'
-          OR (title NOT LIKE '[Shortage]%' AND title NOT LIKE '[Owner Review]%' AND title NOT LIKE '[Reversal]%')
-       GROUP BY shortage_key
-     ) ic ON ic.shortage_key = s.shortage_key
-     LEFT JOIN (
-       SELECT shortage_key, MAX(jira_issue_key) AS jira_issue_key, MAX(state) AS state
+  const [rows, openRespRows] = await Promise.all([
+    query<{
+      shortage_key: string;
+      generic_name: string;
+      status: string;
+      package_ndc: string;
+      presentation: string;
+      dosage_form: string;
+      company_name: string;
+      update_date: string;
+      initial_posting_date: string;
+      reason: string;
+      display_name: string;
+      impact_count: number | null;
+      jira_issue_key: string | null;
+      response_state: string | null;
+    }>(
+      `SELECT s.shortage_key,
+              MAX(s.generic_name) AS generic_name,
+              MAX(s.status) AS status,
+              MAX(s.package_ndc) AS package_ndc,
+              MAX(s.presentation) AS presentation,
+              MAX(s.dosage_form) AS dosage_form,
+              MAX(s.company_name) AS company_name,
+              MAX(s.update_date) AS update_date,
+              MAX(s.initial_posting_date) AS initial_posting_date,
+              MIN(m.reason) AS reason,
+              MIN(f.display_name) AS display_name,
+              COALESCE(MAX(ic.impact_count), 0) AS impact_count,
+              MAX(r.jira_issue_key) AS jira_issue_key,
+              MAX(r.state) AS response_state
+       FROM \`match\` m
+       JOIN shortage s ON s.shortage_key = m.shortage_key
+       JOIN formulary_item f ON f.id = m.formulary_item_id
+       LEFT JOIN (
+         SELECT shortage_key, COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS impact_count
+         FROM impact_item
+         WHERE kind != 'jira'
+            OR (title NOT LIKE '[Shortage]%' AND title NOT LIKE '[Owner Review]%' AND title NOT LIKE '[Reversal]%')
+         GROUP BY shortage_key
+       ) ic ON ic.shortage_key = s.shortage_key
+       LEFT JOIN (
+         SELECT shortage_key, MAX(jira_issue_key) AS jira_issue_key, MAX(state) AS state
+         FROM response
+         WHERE COALESCE(state, 'open') = 'open'
+           AND jira_issue_key NOT LIKE 'SAMPLE-%'
+           AND jira_issue_key NOT LIKE 'HIST-%'
+         GROUP BY shortage_key
+       ) r ON r.shortage_key = s.shortage_key
+       WHERE m.superseded = 0
+       GROUP BY s.shortage_key
+       ORDER BY CASE MAX(s.status) WHEN 'Current' THEN 0 WHEN 'To Be Discontinued' THEN 1 ELSE 2 END,
+                MAX(s.update_date) DESC
+       LIMIT 2000`,
+    ),
+    query<{ ingredient: string; jira_issue_key: string; state: string }>(
+      `SELECT ingredient, jira_issue_key, state
        FROM response
-       WHERE jira_issue_key NOT LIKE 'SAMPLE-%' AND jira_issue_key NOT LIKE 'HIST-%'
-       GROUP BY shortage_key
-     ) r ON r.shortage_key = s.shortage_key
-     WHERE m.superseded = 0
-     GROUP BY s.shortage_key
-     ORDER BY CASE MAX(s.status) WHEN 'Current' THEN 0 WHEN 'To Be Discontinued' THEN 1 ELSE 2 END,
-              MAX(s.update_date) DESC
-     LIMIT 2000`,
-  );
-  return rows.map((r) => ({
-    shortageId: r.shortage_key,
-    genericName: r.generic_name,
-    ingredientGroup: baseIngredientName(r.generic_name ?? ''),
-    presentation: r.presentation,
-    packageNdc: r.package_ndc,
-    dosageForm: r.dosage_form,
-    company: r.company_name,
-    status: r.status,
-    updateDate: r.update_date,
-    initialPostingDate: r.initial_posting_date,
-    matchedTo: r.display_name,
-    reason: r.reason,
-    source: fdaSourceUrl(r.package_ndc),
-    impactCount: Number(r.impact_count ?? 0),
-    responseWorkItem: r.jira_issue_key ?? null,
-    responseState: r.response_state ?? null,
-  }));
+       WHERE COALESCE(state, 'open') = 'open'
+         AND jira_issue_key IS NOT NULL
+         AND jira_issue_key NOT LIKE 'SAMPLE-%'
+         AND jira_issue_key NOT LIKE 'HIST-%'`,
+    ),
+  ]);
+
+  // Responses are 1 per exact ingredient signature — attach to every presentation row of that ingredient.
+  const openRespBySig = new Map<string, { key: string; state: string }>();
+  for (const r of openRespRows) {
+    const sig = ingredientSignature(r.ingredient);
+    if (sig && !openRespBySig.has(sig)) {
+      openRespBySig.set(sig, { key: r.jira_issue_key, state: r.state || 'open' });
+    }
+  }
+
+  return rows.map((r) => {
+    const sig = ingredientSignature(r.generic_name ?? '');
+    const ingResp = r.status !== 'Resolved' && sig ? openRespBySig.get(sig) : undefined;
+    return {
+      shortageId: r.shortage_key,
+      genericName: r.generic_name,
+      ingredientGroup: baseIngredientName(r.generic_name ?? ''),
+      presentation: r.presentation,
+      packageNdc: r.package_ndc,
+      dosageForm: r.dosage_form,
+      company: r.company_name,
+      status: r.status,
+      updateDate: r.update_date,
+      initialPostingDate: r.initial_posting_date,
+      matchedTo: r.display_name,
+      reason: r.reason,
+      source: fdaSourceUrl(r.package_ndc),
+      impactCount: Number(r.impact_count ?? 0),
+      responseWorkItem: r.jira_issue_key ?? ingResp?.key ?? null,
+      responseState: r.response_state ?? ingResp?.state ?? null,
+    };
+  });
 });
 
 /** Full shortage detail drawer: FDA facts, status history, matches, impact, response, temp changes, precedents. */
@@ -641,7 +693,36 @@ resolver.define(
     ]);
 
     const shortage = shortageRows[0] ?? null;
-    const response = responseRows[0] ?? null;
+    const targetSig = ingredientSignature(shortage?.generic_name ?? '');
+
+    // Responses are per exact ingredient signature: if this exact NDC row
+    // doesn't hold the response record, resolve the ingredient's open response.
+    let response: (typeof responseRows)[number] | null = responseRows[0] ?? null;
+    if (!response && targetSig && shortage?.status !== 'Resolved') {
+      const openAll = await query<{
+        id: number;
+        shortage_key: string;
+        ingredient: string;
+        jira_issue_key: string;
+        jira_issue_id: string;
+        state: string;
+        opened_at: string;
+        resolved_at: string | null;
+        reversal_needed: number;
+        decision_summary: string | null;
+      }>(
+        `SELECT id, shortage_key, ingredient, jira_issue_key, jira_issue_id, state,
+                opened_at, resolved_at, reversal_needed, decision_summary
+         FROM response
+         WHERE COALESCE(state, 'open') = 'open'
+           AND jira_issue_key IS NOT NULL
+           AND jira_issue_key NOT LIKE 'SAMPLE-%'
+           AND jira_issue_key NOT LIKE 'HIST-%'
+         ORDER BY id ASC`,
+      );
+      response = openAll.find((r) => ingredientSignature(r.ingredient) === targetSig) ?? null;
+    }
+
     const statusHistory = safeJsonParse<{ status: string; from?: string; to?: string }[]>(
       shortage?.status_history,
       [],
@@ -667,7 +748,7 @@ resolver.define(
       : [];
 
     const baseIng = baseIngredientName(shortage?.generic_name ?? response?.ingredient ?? '');
-    const pastResponses = baseIng
+    const rawPast = baseIng
       ? await query<{
           id: number;
           shortage_key: string;
@@ -682,10 +763,16 @@ resolver.define(
            FROM response
            WHERE LOWER(ingredient) LIKE ? AND shortage_key != ?
            ORDER BY opened_at DESC
-           LIMIT 20`,
+           LIMIT 30`,
           [`%${baseIng.toLowerCase()}%`, key],
         )
       : [];
+    // Filter Seen Before to the EXACT ingredient signature (so plain bupivacaine never pulls bupi+epi).
+    const pastResponses = rawPast.filter(
+      (r) =>
+        r.id !== response?.id &&
+        (!targetSig || ingredientSignature(r.ingredient) === targetSig),
+    );
 
     return {
       shortage,
@@ -1108,8 +1195,19 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
   }
 
   let enrichedOwners = 0;
-  let discoveredLinkedPages = 0;
+  const directPageIds = new Set(pageGroups.keys());
+  const existingSecondHopIds = new Set(
+    allImpactRows
+      .filter((r) => r.kind === 'page' && Number(r.hop ?? 1) === 2 && !directPageIds.has(r.ref_id))
+      .map((r) => r.ref_id),
+  );
+  const newlyDiscoveredSecondHopIds = new Set<string>();
   const missing: string[] = [];
+  const logMissing = (label: string, rawErr?: string) => {
+    if (!rawErr) return;
+    console.log(`[shortfall] enrichImpact ${label}: ${rawErr}`);
+    if (!missing.includes(label)) missing.push(label);
+  };
   const userCache = new Map<string, { name: string; accountId: string } | null>();
   const pendingLinkedRows: {
     shortageKey: string;
@@ -1128,20 +1226,20 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
     // 1. Human owner: TWG pageOwners -> pageCreator -> pageContributors -> Confluence REST v2
     //    (ownerId -> authorId -> version.authorId -> page version history). Never accept app accounts.
     const ownersRes = await pageOwners(pageAri);
-    if (ownersRes.error) missing.push(ownersRes.error);
+    logMissing('Teamwork Graph page owners', ownersRes.error);
     let ownerNodes = ownersRes.nodes.filter(
       (n) => (n.name ?? n.displayName ?? '').trim().toLowerCase() !== 'shortfall',
     );
     if (!ownerNodes.length) {
       const creatorRes = await pageCreator(pageAri);
-      if (creatorRes.error) missing.push(creatorRes.error);
+      logMissing('Teamwork Graph page creator', creatorRes.error);
       ownerNodes = creatorRes.nodes.filter(
         (n) => (n.name ?? n.displayName ?? '').trim().toLowerCase() !== 'shortfall',
       );
     }
     if (!ownerNodes.length) {
       const contribRes = await pageContributors(pageAri);
-      if (contribRes.error) missing.push(contribRes.error);
+      logMissing('Teamwork Graph page contributors', contribRes.error);
       ownerNodes = contribRes.nodes.filter(
         (n) => (n.name ?? n.displayName ?? '').trim().toLowerCase() !== 'shortfall',
       );
@@ -1217,9 +1315,9 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
     let teamName = '';
     if (ownerUserAri) {
       const teamsRes = await userTeams(ownerUserAri);
-      if (teamsRes.error) missing.push(teamsRes.error);
+      logMissing('Teamwork Graph team lookup', teamsRes.error);
       teamName = teamsRes.nodes
-        .map((n) => n.name ?? n.displayName ?? '')
+        .map((n) => n.displayName ?? n.name ?? '')
         .filter(Boolean)
         .join(', ');
     }
@@ -1244,12 +1342,14 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
     }
 
     // 3. 2nd-hop Teamwork Graph linked Confluence pages (collected for batch INSERT).
+    //    Skip pages already directly impacted (hop = 1) and space homepages so
+    //    total === direct + 2nd-hop with zero overlap.
     const linkedRes = await linkedPages(pageAri);
-    if (linkedRes.error) missing.push(linkedRes.error);
+    logMissing('Teamwork Graph linked pages', linkedRes.error);
     for (const node of linkedRes.nodes) {
       const rawId = node.id ?? '';
       const linkedPageId = rawId.includes('/') ? rawId.split('/').pop() ?? '' : rawId;
-      if (!linkedPageId || linkedPageId === refId) continue;
+      if (!linkedPageId || linkedPageId === refId || directPageIds.has(linkedPageId)) continue;
 
       const rec = node as Record<string, unknown>;
       const title =
@@ -1257,6 +1357,7 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
         node.name ??
         node.displayName ??
         `Linked Confluence page ${linkedPageId}`;
+      if (title.trim().toLowerCase().endsWith(' home')) continue;
       const rawUrl =
         (typeof rec.url === 'string' && rec.url) ||
         (typeof rec.webUrl === 'string' && rec.webUrl) ||
@@ -1276,7 +1377,10 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
           spaceKey,
           detail: `Linked via Teamwork Graph from page ${refId}`,
         });
-        discoveredLinkedPages++;
+        if (!existingSecondHopIds.has(linkedPageId)) {
+          newlyDiscoveredSecondHopIds.add(linkedPageId);
+          existingSecondHopIds.add(linkedPageId);
+        }
       }
     }
   }
@@ -1300,11 +1404,18 @@ resolver.define('enrichImpact', async ({ context }: { context?: ReqContext }) =>
     );
   }
 
+  // Automatically create missing linked [Owner Review] Jira tasks for open
+  // responses now that human owners are resolved (idempotent, 1 per owner per ingredient).
+  const ownerTaskSync = await syncOwnerTasksForOpenResponses({ asUser: true });
+
   return {
     enrichedOwners,
-    discoveredLinkedPages,
+    discoveredLinkedPages: newlyDiscoveredSecondHopIds.size,
+    totalSecondHopPages: existingSecondHopIds.size,
+    createdOwnerTasks: ownerTaskSync.created,
+    skippedExistingOwnerTasks: ownerTaskSync.skippedExisting,
     sqlStatements: getSqlStatementCount(),
-    missing: [...new Set(missing)].slice(0, 15),
+    missing: [...new Set(missing)].slice(0, 10),
   };
 });
 
