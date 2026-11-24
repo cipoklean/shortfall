@@ -187,7 +187,7 @@ export async function computeDashboardMetrics() {
       `SELECT COUNT(DISTINCT r.jira_issue_key) AS n
        FROM response r
        LEFT JOIN shortage s ON s.shortage_key = r.shortage_key
-       WHERE COALESCE(r.state, 'open') != 'resolved'
+       WHERE COALESCE(r.state, 'open') = 'open'
          AND r.jira_issue_key IS NOT NULL
          AND r.jira_issue_key NOT LIKE 'SAMPLE-%'
          AND r.jira_issue_key NOT LIKE 'HIST-%'

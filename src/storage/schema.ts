@@ -197,6 +197,25 @@ migrationRunner.enqueue(
   `DELETE FROM impact_item WHERE shortage_key LIKE 'ndc:%' AND CHAR_LENGTH(shortage_key) = 14`,
 );
 
+// Track per-owner Jira review tasks so at most one task is created per owner
+// per shorted ingredient response (idempotent across runs, cleanable).
+migrationRunner.enqueue(
+  '017-owner-task',
+  `CREATE TABLE IF NOT EXISTS owner_task (
+    id                BIGINT AUTO_INCREMENT PRIMARY KEY,
+    response_id       BIGINT,
+    ingredient_key    VARCHAR(256),
+    owner_key         VARCHAR(128),
+    owner_account_id  VARCHAR(64),
+    owner_name        VARCHAR(256),
+    jira_issue_key    VARCHAR(32),
+    jira_issue_id     VARCHAR(32),
+    created_at        DATETIME,
+    UNIQUE KEY uq_owner_task_ing_owner (ingredient_key, owner_key),
+    INDEX idx_owner_task_response (response_id)
+  )`,
+);
+
 /** Execute a parameterized SELECT query and return its rows. */
 export async function query<T = Record<string, unknown>>(
   statement: string,

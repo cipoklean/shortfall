@@ -6298,7 +6298,8 @@ Please see https://iframe-resizer.com/upgrade for more details.
           ${SHELF_GAP_SVG}
           ${statusSticker(status)}
         </div>
-        <a class="chip-meta" href="${esc(srcUrl)}" title="Open openFDA shortage record">NDC ${esc(packageNdc || "source")} &rarr;</a>
+        <a class="chip-meta" href="https://dps.fda.gov/drugshortages" title="Open FDA Drug Shortages Database">FDA Shortages DB</a>
+        <a class="chip-meta" href="${esc(srcUrl)}" title="Open openFDA record (raw data)">NDC ${esc(packageNdc || "source")} (raw data) &rarr;</a>
       </div>
       <h2 class="drug-title">${esc(genericName)}</h2>
       ${presentation ? `<p class="drug-pres">${esc(presentation)}</p>` : ""}

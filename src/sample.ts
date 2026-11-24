@@ -26,7 +26,7 @@ interface SampleDrug {
  * presentations of currently-shorted injectables, a resolved one, and
  * common drugs expected not to match.
  */
-const SAMPLE_DRUGS: SampleDrug[] = [
+export const SAMPLE_DRUGS: SampleDrug[] = [
   { id: 'sample-cefazolin-2g', displayName: 'cefazolin in dextrose 2 g/100 mL premix', ingredients: ['cefazolin'], packageNdcs: ['0338-3508-41'], dosageForms: ['injection'] },
   { id: 'sample-cefazolin-3g', displayName: 'cefazolin in dextrose 3 g/150 mL premix', ingredients: ['cefazolin'], packageNdcs: ['0338-0096-06'], dosageForms: ['injection'] },
   { id: 'sample-ropivacaine', displayName: 'ropivacaine HCl injection', ingredients: ['ropivacaine'], packageNdcs: ['70069-062-25'], dosageForms: ['injection'] },
@@ -58,10 +58,10 @@ interface SampleRefs {
   projectKey?: string;
 }
 
-// Order matters: dependent 2nd-hop order sets are created FIRST so that
-// direct drug protocols can link TO them via <ac:link><ri:page .../></ac:link>,
-// enabling Teamwork Graph's outgoing `confluencePageLinkedConfluencePages`
-// traversal to discover 2nd-hop blast radius immediately.
+// Order matters: dependent pages and P&T minutes are created so that links
+// between direct drug protocols and dependent order sets / P&T minutes resolve
+// cleanly via <ac:link><ri:page .../></ac:link> for Teamwork Graph 2nd-hop
+// blast-radius traversal.
 const SAMPLE_PAGES: { title: string; body: string }[] = [
   {
     title: 'Orthopedic arthroplasty admission order set',
@@ -69,7 +69,15 @@ const SAMPLE_PAGES: { title: string; body: string }[] = [
   },
   {
     title: 'ED airway escalation checklist',
-    body: `<p>Fictional sample emergency department airway escalation checklist at Sample Hospital.</p><p>Before induction, confirm backup video laryngoscopy, supraglottic airway kit, and institutional rapid sequence intubation protocol readiness.</p>`,
+    body: `<p>Fictional sample emergency department airway escalation checklist at Sample Hospital.</p><p>Before induction, confirm backup video laryngoscopy, supraglottic airway kit, and medication readiness per the <ac:link><ri:page ri:content-title="Rapid sequence intubation order set" /></ac:link>.</p>`,
+  },
+  {
+    title: 'P&T minutes — 2025-09 cefazolin',
+    body: `<p>Fictional Pharmacy &amp; Therapeutics committee minutes (September 2025) at Sample Hospital. No patient data.</p><p><strong>Decision — Cefazolin injection shortage (2025-09):</strong> Approved temporary conservation of premixed cefazolin 2 g bags exclusively for OR surgical prophylaxis; floor stock converted to pharmacy-compounded syringes for non-OR indications.</p><p><strong>Reversal (2025-11):</strong> Supply restored on the FDA drug shortages list; premix restriction lifted and floor stock returned to baseline.</p>`,
+  },
+  {
+    title: 'ICU diuretic protocol — loop diuretic infusions',
+    body: `<p>Fictional sample ICU diuretic guideline at Sample Hospital. No patient data.</p><p>Continuous and intermittent loop diuretic therapy includes furosemide and bumetanide injection (IV bumetanide 1 mg to 2 mg bolus or continuous infusion per ICU titration order set).</p><p>During supply constraints, temporary IV bumetanide vial conservation alerts are posted on this protocol and reversed once FDA marks supply resolved.</p>`,
   },
   {
     title: 'Cefazolin surgical prophylaxis protocol',
@@ -93,7 +101,7 @@ const SAMPLE_PAGES: { title: string; body: string }[] = [
   },
   {
     title: 'Drug shortage response log',
-    body: `<p>Fictional running log of past shortage responses at Sample Hospital.</p><p><strong>2025-09 — cefazolin injection shortage:</strong> consented to conserve premixed bags to OR cases only; floor stock converted to pharmacy-compounded syringes. Restriction documented on the P&amp;T minutes page. Reversed 2025-11 when supply returned.</p><p><strong>2025-04 — lidocaine injection shortage:</strong> restricted to code carts and procedures; topical jelly substituted for bedside use.</p>`,
+    body: `<p>Fictional running log of past shortage responses at Sample Hospital.</p><p><strong>2025-09 — cefazolin injection shortage:</strong> consented to conserve premixed bags to OR cases only; floor stock converted to pharmacy-compounded syringes. Restriction documented on <ac:link><ri:page ri:content-title="P&amp;T minutes — 2025-09 cefazolin" /></ac:link>. Reversed 2025-11 when supply returned.</p><p><strong>2025-04 — lidocaine injection shortage:</strong> restricted to code carts and procedures; topical jelly substituted for bedside use.</p>`,
   },
 ];
 

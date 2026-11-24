@@ -8,7 +8,11 @@ import { getSettings } from './settings';
 import { kvs } from '@forge/kvs';
 import { FdaShortageRecord, FormularyItem, IngredientIndex } from './types';
 import { runImpactMapping } from './impact';
-import { createResponsesForNewMatches, openReversalTasks } from './respond';
+import {
+  createResponsesForNewMatches,
+  openReversalTasks,
+  closeSupersededResponses,
+} from './respond';
 
 const syncQueue = new Queue({ key: 'sync-queue' });
 
@@ -358,6 +362,7 @@ export async function runSyncJob(kind: string): Promise<void> {
       );
     }
 
+    const supersededResponses = await closeSupersededResponses(matchedKeys);
     const impactResult = await runImpactMapping(matchedKeys, progress);
     const newMatchedKeys = newKeys.filter((k) => matchedKeys.has(k));
     const responseResult = settings.autoCreateResponses
@@ -372,6 +377,7 @@ export async function runSyncJob(kind: string): Promise<void> {
       matched: matches.length,
       impact: impactResult,
       responses: responseResult,
+      supersededResponses,
       reversals: reversalResult,
     });
     await updateSyncRun(runId, {

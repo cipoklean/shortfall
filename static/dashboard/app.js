@@ -6811,7 +6811,8 @@ Please see https://iframe-resizer.com/upgrade for more details.
     <section class="drawer-section">
       <h3 class="drawer-section-title">
         <span>FDA Shortage Facts</span>
-        <a href="${esc(srcUrl)}">View openFDA record &rarr;</a>
+        <a href="https://dps.fda.gov/drugshortages">FDA Drug Shortages Database &rarr;</a> \xB7
+        <a href="${esc(srcUrl)}">openFDA record (raw data) &rarr;</a>
       </h3>
       <dl class="fact-grid">
         <div class="fact-item"><dt>Package NDC</dt><dd class="mono"><a href="${esc(srcUrl)}">${esc(packageNdc || "\u2014")}</a></dd></div>

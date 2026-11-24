@@ -390,4 +390,37 @@ describe('matchShortages', () => {
     // "sensorcaine" matches on word boundary -> name match.
     expect(matches.some((m) => m.reason === 'ingredient_name')).toBe(true);
   });
+
+  it('never matches the 10 unrelated non-formulary drugs against the 12-item sample formulary', () => {
+    const sampleFormulary: FormularyItem[] = [
+      item({ id: 'sample-cefazolin-2g', displayName: 'cefazolin in dextrose 2 g/100 mL premix', ingredientNames: ['cefazolin'], ingredientRxcuis: ['2180'], packageNdcs: ['00338350841'], dosageForms: ['injection'] }),
+      item({ id: 'sample-cefazolin-3g', displayName: 'cefazolin in dextrose 3 g/150 mL premix', ingredientNames: ['cefazolin'], ingredientRxcuis: ['2180'], packageNdcs: ['00338009606'], dosageForms: ['injection'] }),
+      item({ id: 'sample-ropivacaine', displayName: 'ropivacaine HCl injection', ingredientNames: ['ropivacaine'], ingredientRxcuis: ['35780'], packageNdcs: ['70069006225'], dosageForms: ['injection'] }),
+      item({ id: 'sample-bupi-epi', displayName: 'bupivacaine HCl/epinephrine injection', ingredientNames: ['bupivacaine', 'epinephrine'], ingredientRxcuis: ['3640', '3992'], packageNdcs: ['63323046217'], dosageForms: ['injection'] }),
+      item({ id: 'sample-rocuronium', displayName: 'rocuronium bromide injection', ingredientNames: ['rocuronium'], ingredientRxcuis: ['68139'], packageNdcs: ['25021068705'], dosageForms: ['injection'] }),
+      item({ id: 'sample-lidocaine', displayName: 'lidocaine HCl injection', ingredientNames: ['lidocaine'], ingredientRxcuis: ['6387'], packageNdcs: [], dosageForms: ['injection'] }),
+      item({ id: 'sample-heparin', displayName: 'heparin sodium 1,000 units/mL injection', ingredientNames: ['heparin'], ingredientRxcuis: ['5224'], packageNdcs: [], dosageForms: ['injection'] }),
+      item({ id: 'sample-bumetanide', displayName: 'bumetanide injection', ingredientNames: ['bumetanide'], ingredientRxcuis: ['1808'], packageNdcs: ['72205010207'], dosageForms: ['injection'] }),
+      item({ id: 'sample-furosemide-tab', displayName: 'furosemide 40 mg tablet', ingredientNames: ['furosemide'], ingredientRxcuis: ['4603'], packageNdcs: [], dosageForms: ['tablet'] }),
+      item({ id: 'sample-acetaminophen', displayName: 'acetaminophen 500 mg tablet', ingredientNames: ['acetaminophen'], ingredientRxcuis: ['161'], packageNdcs: [], dosageForms: ['tablet'] }),
+      item({ id: 'sample-insulin-glargine', displayName: 'insulin glargine 100 units/mL injection', ingredientNames: ['insulin glargine'], ingredientRxcuis: ['274783'], packageNdcs: [], dosageForms: ['injection'] }),
+      item({ id: 'sample-metformin', displayName: 'metformin 500 mg tablet', ingredientNames: ['metformin'], ingredientRxcuis: ['6809'], packageNdcs: [], dosageForms: ['tablet'] }),
+    ];
+
+    const unrelatedDrugs: FdaShortageRecord[] = [
+      { generic_name: 'Lamivudine Tablet', package_ndc: '49702-205-48', dosage_form: 'Tablet', status: 'Current', openfda: { generic_name: ['LAMIVUDINE'], substance_name: ['LAMIVUDINE'] } },
+      { generic_name: 'Abacavir Sulfate Tablet', package_ndc: '49702-222-48', dosage_form: 'Tablet', status: 'Current', openfda: { generic_name: ['ABACAVIR SULFATE'], substance_name: ['ABACAVIR'] } },
+      { generic_name: 'Olipudase Alfa-rpcp Injection', package_ndc: '58468-005-11', dosage_form: 'Injection', status: 'Current', openfda: { generic_name: ['OLIPUDASE ALFA-RPCP'] } },
+      { generic_name: 'Bendamustine Hydrochloride Injection', package_ndc: '42367-521-25', dosage_form: 'Injection', status: 'Current', openfda: { generic_name: ['BENDAMUSTINE HYDROCHLORIDE'] } },
+      { generic_name: 'Somatropin Injection', package_ndc: '55566-180-11', dosage_form: 'Injection', status: 'Current', openfda: { generic_name: ['SOMATROPIN'] } },
+      { generic_name: 'Demeclocycline Hydrochloride Tablet', package_ndc: '53746-555-48', dosage_form: 'Tablet', status: 'Current', openfda: { generic_name: ['DEMECLOCYCLINE HYDROCHLORIDE'] } },
+      { generic_name: 'Oseltamivir Phosphate Capsule', package_ndc: '0004-0822-05', dosage_form: 'Capsule', status: 'Current', openfda: { generic_name: ['OSELTAMIVIR PHOSPHATE'] } },
+      { generic_name: 'Medroxyprogesterone Acetate Injection', package_ndc: '0009-0287-01', dosage_form: 'Injection', status: 'Current', openfda: { generic_name: ['MEDROXYPROGESTERONE ACETATE'] } },
+      { generic_name: 'Spironolactone Tablet', package_ndc: '0025-1041-31', dosage_form: 'Tablet', status: 'Current', openfda: { generic_name: ['SPIRONOLACTONE'] } },
+      { generic_name: 'Propranolol Hydrochloride Tablet', package_ndc: '0228-2778-11', dosage_form: 'Tablet', status: 'Current', openfda: { generic_name: ['PROPRANOLOL HYDROCHLORIDE'] } },
+    ];
+
+    const matches = matchShortages(unrelatedDrugs, sampleFormulary, INDEX);
+    expect(matches).toHaveLength(0);
+  });
 });

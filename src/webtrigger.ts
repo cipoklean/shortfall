@@ -5,7 +5,7 @@ import { loadSampleHospital, removeSampleHospital } from './sample';
 import {
   createResponseForShortage,
   openReversalTasksForResolvedResponses,
-  cleanupDuplicateResponses,
+  cleanupShortfallProcIssues,
 } from './respond';
 import { actionGetActiveShortages, actionGetReversalChecklist } from './actions';
 import { saveSettings } from './settings';
@@ -102,9 +102,11 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
     }
     case 'reversals':
       return json(200, await openReversalTasksForResolvedResponses());
-    case 'cleanup-duplicates': {
+    case 'cleanup-shortfall': {
+      const confirm = req.queryParameters?.confirm?.[0] === '1';
+      const projectKey = req.queryParameters?.project?.[0];
       const maxDeletes = Number(req.queryParameters?.max?.[0] ?? 80);
-      return json(200, await cleanupDuplicateResponses({ maxDeletes }));
+      return json(200, await cleanupShortfallProcIssues({ confirm, projectKey, maxDeletes }));
     }
     default:
       return json(400, { error: `unknown action ${action}` });
