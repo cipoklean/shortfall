@@ -6227,6 +6227,11 @@ Please see https://iframe-resizer.com/upgrade for more details.
     const via = String(item?.found_via ?? item?.foundVia ?? "").toLowerCase();
     return via.includes("graph") || via.includes("2nd") || via.includes("second") || via.includes("linked");
   }
+  function cleanUserError(err) {
+    const raw = String(err?.message ?? err ?? "Unexpected error");
+    const stripped = raw.replace(/\{[\s\S]*\}/g, "").replace(/\s+/g, " ").trim();
+    return (stripped || "Request failed").slice(0, 180);
+  }
   function showToast(message, isError = false) {
     const el = $("toast-banner");
     el.classList.toggle("is-error", Boolean(isError));
@@ -6311,10 +6316,10 @@ Please see https://iframe-resizer.com/upgrade for more details.
     const discontinued = Number(d.discontinuedMatched ?? 0);
     const resolved = Number(d.resolvedMatched ?? 0);
     $("kpi-active").textContent = String(active);
-    const activeSubParts = [];
+    const activeSubParts = [`${active} current`];
     if (discontinued > 0) activeSubParts.push(`${discontinued} discontinued`);
     if (resolved > 0) activeSubParts.push(`${resolved} resolved`);
-    $("kpi-active-sub").textContent = activeSubParts.length ? activeSubParts.join(" \xB7 ") : "Current FDA matches";
+    $("kpi-active-sub").textContent = activeSubParts.join(" \xB7 ");
     const direct = Number(d.directImpactItems ?? 0);
     const linked = Number(d.linkedImpactItems ?? 0);
     const totalImpact = d.impactItems != null ? Number(d.impactItems) : direct + linked;
@@ -6950,6 +6955,25 @@ Please see https://iframe-resizer.com/upgrade for more details.
       btn.textContent = orig;
     }
   });
+  $("btn-rovo").addEventListener("click", async () => {
+    const btn = $("btn-rovo");
+    btn.disabled = true;
+    try {
+      await import_bridge.rovo.open({
+        type: "forge",
+        agentKey: "shortage-agent",
+        agentName: "Shortfall",
+        prompt: "What does the cefazolin shortage affect, what did we do last time, and which temporary changes still need to be reversed?"
+      });
+    } catch {
+      showToast(
+        'Open Rovo Chat and select "Shortfall" from the agent picker to query shortages, impact maps, and pending reversals.',
+        true
+      );
+    } finally {
+      btn.disabled = false;
+    }
+  });
   $("btn-reversals").addEventListener("click", async () => {
     const btn = $("btn-reversals");
     btn.disabled = true;
@@ -7156,16 +7180,33 @@ Please see https://iframe-resizer.com/upgrade for more details.
   $("btn-load-sample").addEventListener("click", async () => {
     const btn = $("btn-load-sample");
     btn.disabled = true;
-    btn.textContent = "Creating sample hospital\u2026";
+    btn.textContent = "Loading sample hospital\u2026";
     try {
       const r = await (0, import_bridge.invoke)("loadSampleHospital");
-      const pages = r?.pageIds?.length ?? 0;
+      const totalPages = r?.pageIds?.length ?? 0;
+      const created = Number(r?.createdPages ?? 0);
+      const updated = Number(r?.updatedPages ?? 0);
+      const reused = Number(r?.reusedPages ?? 0);
       const drugs = r?.formularyCount ?? 0;
-      const warn = r?.warnings?.length ? ` (${r.warnings.join("; ")})` : "";
-      showToast(`Loaded sample hospital ${r?.spaceKey ?? ""}: ${pages} protocol pages and ${drugs} formulary items.${warn}`);
+      const warnings = Array.isArray(r?.warnings) ? r.warnings : [];
+      const detailParts = [];
+      if (created > 0) detailParts.push(`${created} created`);
+      if (updated > 0) detailParts.push(`${updated} updated`);
+      if (reused > 0) detailParts.push(`${reused} reused`);
+      const pageDetail = detailParts.length ? ` (${detailParts.join(", ")})` : "";
+      if (warnings.length > 0) {
+        showToast(
+          `Sample hospital ${r?.spaceKey ?? "SHOSP"} loaded with ${warnings.length} issue${warnings.length === 1 ? "" : "s"}: ${cleanUserError(warnings[0])}`,
+          true
+        );
+      } else {
+        showToast(
+          `Sample hospital ready in ${r?.spaceKey ?? "SHOSP"}: ${totalPages} protocol pages${pageDetail} and ${drugs} formulary items.`
+        );
+      }
       await Promise.all([refresh(), loadSetupOptions()]);
     } catch (err) {
-      showToast(`Could not load sample hospital: ${err?.message ?? err}`, true);
+      showToast(`Could not load sample hospital: ${cleanUserError(err)}`, true);
     } finally {
       btn.disabled = false;
       btn.textContent = "Load sample hospital";
@@ -7177,10 +7218,18 @@ Please see https://iframe-resizer.com/upgrade for more details.
     btn.textContent = "Removing sample hospital\u2026";
     try {
       const r = await (0, import_bridge.invoke)("removeSampleHospital");
-      showToast(`Removed sample hospital (${r?.removedPages ?? 0} pages, ${r?.removedFormulary ?? 0} formulary items).`);
+      const warnings = Array.isArray(r?.warnings) ? r.warnings : [];
+      if (warnings.length > 0) {
+        showToast(
+          `Removed sample hospital with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}: ${cleanUserError(warnings[0])}`,
+          true
+        );
+      } else {
+        showToast(`Removed sample hospital (${r?.removedPages ?? 0} pages, ${r?.removedFormulary ?? 0} formulary items).`);
+      }
       await Promise.all([refresh(), loadSetupOptions()]);
     } catch (err) {
-      showToast(`Could not remove sample hospital: ${err?.message ?? err}`, true);
+      showToast(`Could not remove sample hospital: ${cleanUserError(err)}`, true);
     } finally {
       btn.disabled = false;
       btn.textContent = "Remove sample hospital";

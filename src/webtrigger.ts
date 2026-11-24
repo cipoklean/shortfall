@@ -2,7 +2,12 @@ import { timingSafeEqual } from 'node:crypto';
 import { query, runMigrations } from './storage/schema';
 import { enqueueSync } from './sync';
 import { loadSampleHospital, removeSampleHospital } from './sample';
-import { createResponseForShortage, openReversalTasksForResolvedResponses } from './respond';
+import {
+  createResponseForShortage,
+  openReversalTasksForResolvedResponses,
+  cleanupDuplicateResponses,
+} from './respond';
+import { actionGetActiveShortages, actionGetReversalChecklist } from './actions';
 import { saveSettings } from './settings';
 import { fdaSourceUrl } from './match';
 import { kvs } from '@forge/kvs';
@@ -97,6 +102,10 @@ export async function webSync(req: WebRequest, ctx: WebContext) {
     }
     case 'reversals':
       return json(200, await openReversalTasksForResolvedResponses());
+    case 'cleanup-duplicates': {
+      const maxDeletes = Number(req.queryParameters?.max?.[0] ?? 80);
+      return json(200, await cleanupDuplicateResponses({ maxDeletes }));
+    }
     default:
       return json(400, { error: `unknown action ${action}` });
   }
@@ -141,8 +150,17 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
   const lastSync = (await kvs.get('lastSync')) ?? null;
 
   const pageCheckId = req.queryParameters?.pageId?.[0];
-  const { getPageNoticeData } = await import('./resolvers');
+  const { getPageNoticeData, computeDashboardMetrics } = await import('./resolvers');
   const pageCheck = pageCheckId ? await getPageNoticeData(pageCheckId) : undefined;
+  const kpis = await computeDashboardMetrics();
+
+  const includeRovo = req.queryParameters?.rovo?.[0] === '1';
+  const rovoCheck = includeRovo
+    ? {
+        cefazolin: await actionGetActiveShortages({ inputs: { ingredient: 'cefazolin' } }),
+        reversals: await actionGetReversalChecklist({ inputs: { state: 'open' } }),
+      }
+    : undefined;
 
   const impactItems = await query<{
     shortage_key: string;
@@ -170,6 +188,8 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
       temporary_change: await countQuery('SELECT COUNT(*) AS n FROM temporary_change'),
       sync_run: await countQuery('SELECT COUNT(*) AS n FROM sync_run'),
     },
+    kpis,
+    rovoCheck,
     syncRuns,
     lastSync,
     pageCheck,

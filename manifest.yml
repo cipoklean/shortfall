@@ -44,9 +44,9 @@ modules:
       function: fn-active-shortages
       actionVerb: GET
       description: |
-        List drug shortages currently marked Current by the FDA that match
-        this site's formulary. Returns one row per FDA presentation (NDC),
-        never merged across strengths or forms.
+        List drug shortages currently marked Current or To Be Discontinued by
+        the FDA that match this site's formulary. Returns one row per FDA
+        presentation (NDC), never merged across strengths or forms.
       inputs:
         ingredient:
           title: Ingredient
@@ -284,6 +284,7 @@ permissions:
     - write:confluence-content
     - write:confluence-space
     - read:space:confluence
+    - read:page:confluence
     - write:page:confluence
     - delete:page:confluence
     - read:confluence-user

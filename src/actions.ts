@@ -42,9 +42,9 @@ export async function actionGetActiveShortages(req: unknown) {
     `SELECT DISTINCT s.shortage_key, s.generic_name, s.presentation, s.package_ndc, s.status, s.update_date, s.company_name
      FROM shortage s
      JOIN \`match\` m ON m.shortage_key = s.shortage_key AND m.superseded = 0
-     WHERE s.status = 'Current' ${filter}
-     ORDER BY s.update_date DESC
-     LIMIT 200`,
+     WHERE s.status IN ('Current', 'To Be Discontinued') ${filter}
+     ORDER BY CASE s.status WHEN 'Current' THEN 0 ELSE 1 END, s.update_date DESC
+     LIMIT 500`,
     params,
   );
   return {

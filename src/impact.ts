@@ -140,13 +140,28 @@ async function searchConfluence(
   }
 }
 
-async function searchJira(terms: string[]): Promise<{ items: DiscoveredItem[]; error?: string }> {
+function isShortfallGeneratedSummary(summary?: string | null): boolean {
+  const s = (summary ?? '').trim();
+  return (
+    s.startsWith('[Shortage]') ||
+    s.startsWith('[Owner Review]') ||
+    s.startsWith('[Reversal]')
+  );
+}
+
+async function searchJira(
+  terms: string[],
+  excludeProjectKey?: string,
+  excludeKeys: Set<string> = new Set(),
+): Promise<{ items: DiscoveredItem[]; error?: string }> {
   if (!terms.length) return { items: [] };
   const textQuery = terms.map((t) => `text ~ "${t.replace(/"/g, '')}"`).join(' OR ');
-  const jql = `(${textQuery}) AND statusCategory != Done ORDER BY updated DESC`;
+  const safeProject = excludeProjectKey?.replace(/"/g, '').trim();
+  const projectFilter = safeProject ? ` AND project != "${safeProject}"` : '';
+  const jql = `(${textQuery}) AND statusCategory != Done${projectFilter} ORDER BY updated DESC`;
   try {
     const res = await api.asApp().requestJira(
-      route`/rest/api/3/search/jql?jql=${jql}&maxResults=50&fields=summary,assignee,status,created`,
+      route`/rest/api/3/search/jql?jql=${jql}&maxResults=50&fields=summary,assignee,status,created,project`,
       { headers: { Accept: 'application/json' } },
     );
     if (!res.ok) return { items: [], error: `JQL ${res.status}` };
@@ -158,19 +173,23 @@ async function searchJira(terms: string[]): Promise<{ items: DiscoveredItem[]; e
           summary?: string;
           assignee?: { accountId?: string; displayName?: string };
           status?: { name?: string };
+          project?: { key?: string };
         };
       }[];
     };
     return {
-      items: (body.issues ?? []).map((i) => ({
-        kind: 'jira',
-        refId: i.key,
-        title: i.fields.summary ?? i.key,
-        url: `/browse/${i.key}`,
-        ownerAccountId: i.fields.assignee?.accountId,
-        ownerName: i.fields.assignee?.displayName,
-        foundVia: 'jira-search',
-      })),
+      items: (body.issues ?? [])
+        .filter((i) => !excludeKeys.has(i.key) && !isShortfallGeneratedSummary(i.fields.summary))
+        .map((i) => ({
+          kind: 'jira',
+          refId: i.key,
+          title: i.fields.summary ?? i.key,
+          url: `/browse/${i.key}`,
+          ownerAccountId: i.fields.assignee?.accountId,
+          ownerName: i.fields.assignee?.displayName,
+          spaceKey: i.fields.project?.key ?? i.key.split('-')[0],
+          foundVia: 'jira-search',
+        })),
     };
   } catch (e) {
     return { items: [], error: `JQL error: ${String(e).slice(0, 120)}` };
@@ -247,6 +266,44 @@ export async function runImpactMapping(
     };
   }
 
+  // Remove any self-referential Shortfall Jira tickets or out-of-scope spaces
+  // that may have been indexed before scope exclusions were configured.
+  await execute(
+    `DELETE FROM impact_item
+     WHERE kind = 'jira'
+       AND (
+         title LIKE '[Shortage]%'
+         OR title LIKE '[Owner Review]%'
+         OR title LIKE '[Reversal]%'
+         OR ref_id IN (SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL)
+       )`,
+  );
+  if (settings.responseProjectKey) {
+    await execute(
+      `DELETE FROM impact_item WHERE kind = 'jira' AND ref_id LIKE ?`,
+      [`${settings.responseProjectKey}-%`],
+    );
+  }
+  if (settings.clinicalSpaceKeys.length > 0) {
+    const ph = settings.clinicalSpaceKeys.map(() => '?').join(',');
+    await execute(
+      `DELETE FROM impact_item
+       WHERE kind = 'page'
+         AND space_key IS NOT NULL
+         AND space_key != ''
+         AND space_key NOT IN (${ph})`,
+      settings.clinicalSpaceKeys,
+    );
+  }
+
+  const responseKeys = new Set(
+    (
+      await query<{ jira_issue_key: string }>(
+        `SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL`,
+      )
+    ).map((r) => r.jira_issue_key),
+  );
+
   // One active impact_item per (shortage_key, kind, ref_id).
   const active = await query<{ shortage_key: string; kind: string; ref_id: string }>(
     `SELECT shortage_key, kind, ref_id FROM impact_item`,
@@ -277,7 +334,7 @@ export async function runImpactMapping(
   for (const group of groups.values()) {
     const [conf, jira] = await Promise.all([
       searchConfluence(group.terms, settings.clinicalSpaceKeys),
-      searchJira(group.terms),
+      searchJira(group.terms, settings.responseProjectKey, responseKeys),
     ]);
     if (conf.error) missing.push(`confluence: ${conf.error}`);
     if (jira.error) missing.push(`jira: ${jira.error}`);

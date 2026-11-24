@@ -4,6 +4,7 @@ import { sql, query, execute } from './storage/schema';
 import { getSettings } from './settings';
 import { OPENFDA_DISCLAIMER } from './types';
 import { fdaSourceUrl, baseIngredientName } from './match';
+import { mapWithConcurrency } from './rxnav';
 
 interface ShortageRow {
   shortage_key: string;
@@ -441,4 +442,180 @@ export async function openReversalTasksForResolvedResponses(): Promise<{
   }
 
   return { opened, errors: errors.length ? errors : undefined };
+}
+
+/**
+ * Safe, idempotent cleanup for duplicate open Jira shortage responses (e.g.
+ * from an earlier run before the per-ingredient cap). Keeps at most one open
+ * Jira response per distinct base ingredient, skips any response that has
+ * temporary_change rows attached, deletes duplicate Jira issues in the
+ * response project, and purges self-referential Jira rows from impact_item.
+ */
+export async function cleanupDuplicateResponses(opts: { maxDeletes?: number } = {}): Promise<{
+  kept: { ingredient: string; jiraIssueKey: string; shortageKey: string }[];
+  removedDbRows: number;
+  deletedJiraIssues: number;
+  jiraDeleteErrors: number;
+  remainingDuplicates: number;
+  cleanedSelfImpactRows: number;
+  remainingOpenResponses: number;
+  jiraProjectShortageCount: number | null;
+}> {
+  const settings = await getSettings();
+  const maxDeletes = opts.maxDeletes ?? 80;
+
+  const openRows = await query<{
+    id: number;
+    shortage_key: string;
+    ingredient: string;
+    jira_issue_key: string;
+    shortage_exists: number;
+    temp_count: number;
+  }>(
+    `SELECT r.id,
+            r.shortage_key,
+            r.ingredient,
+            r.jira_issue_key,
+            CASE WHEN s.shortage_key IS NOT NULL THEN 1 ELSE 0 END AS shortage_exists,
+            (SELECT COUNT(*) FROM temporary_change tc WHERE tc.response_id = r.id) AS temp_count
+     FROM response r
+     LEFT JOIN shortage s ON s.shortage_key = r.shortage_key
+     WHERE COALESCE(r.state, 'open') != 'resolved'
+       AND r.jira_issue_key IS NOT NULL
+       AND r.jira_issue_key NOT LIKE 'SAMPLE-%'
+       AND r.jira_issue_key NOT LIKE 'HIST-%'
+     ORDER BY shortage_exists DESC, r.id ASC`,
+  );
+
+  // Group by normalized base ingredient; keep 1 primary open response per
+  // currently-matched ingredient. Orphaned responses (not matching any current
+  // shortage row) without temporary changes are also cleaned up.
+  const keptMap = new Map<string, (typeof openRows)[number]>();
+  const duplicates: (typeof openRows)[number][] = [];
+
+  for (const row of openRows) {
+    if (Number(row.temp_count) > 0) {
+      const ingKey = baseIngredientName(row.ingredient ?? '').toLowerCase() || `id:${row.id}`;
+      if (!keptMap.has(ingKey)) keptMap.set(ingKey, row);
+      continue;
+    }
+    if (Number(row.shortage_exists) === 0) {
+      duplicates.push(row);
+      continue;
+    }
+    const ingKey = baseIngredientName(row.ingredient ?? '').toLowerCase() || `id:${row.id}`;
+    if (!keptMap.has(ingKey)) {
+      keptMap.set(ingKey, row);
+      continue;
+    }
+    duplicates.push(row);
+  }
+
+  const batch = duplicates.slice(0, maxDeletes);
+  let deletedJiraIssues = 0;
+  let jiraDeleteErrors = 0;
+  let removedDbRows = 0;
+
+  await mapWithConcurrency(batch, 6, async (dup) => {
+    const key = dup.jira_issue_key;
+    let jiraOk = false;
+    try {
+      const res = await api.asApp().requestJira(route`/rest/api/3/issue/${key}`, {
+        method: 'DELETE',
+        headers: { Accept: 'application/json' },
+      });
+      if (res.ok || res.status === 404) {
+        deletedJiraIssues++;
+        jiraOk = true;
+      } else {
+        jiraDeleteErrors++;
+      }
+    } catch {
+      jiraDeleteErrors++;
+    }
+    if (jiraOk) {
+      await execute(`DELETE FROM response WHERE id = ?`, [dup.id]);
+      removedDbRows++;
+    }
+  });
+
+  // Clean up any self-referential Jira impact items (Shortfall's own [Shortage] tickets).
+  const beforeSelf = (
+    await query<{ n: number }>(
+      `SELECT COUNT(*) AS n
+       FROM impact_item
+       WHERE kind = 'jira'
+         AND (
+           title LIKE '[Shortage]%'
+           OR title LIKE '[Owner Review]%'
+           OR title LIKE '[Reversal]%'
+           OR ref_id IN (SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL)
+           ${settings.responseProjectKey ? 'OR ref_id LIKE ?' : ''}
+         )`,
+      settings.responseProjectKey ? [`${settings.responseProjectKey}-%`] : [],
+    )
+  )[0]?.n ?? 0;
+
+  await execute(
+    `DELETE FROM impact_item
+     WHERE kind = 'jira'
+       AND (
+         title LIKE '[Shortage]%'
+         OR title LIKE '[Owner Review]%'
+         OR title LIKE '[Reversal]%'
+         OR ref_id IN (SELECT jira_issue_key FROM response WHERE jira_issue_key IS NOT NULL)
+       )`,
+  );
+  if (settings.responseProjectKey) {
+    await execute(`DELETE FROM impact_item WHERE kind = 'jira' AND ref_id LIKE ?`, [
+      `${settings.responseProjectKey}-%`,
+    ]);
+  }
+
+  const remainingRows = await query<{ n: number }>(
+    `SELECT COUNT(*) AS n
+     FROM response r
+     LEFT JOIN shortage s ON s.shortage_key = r.shortage_key
+     WHERE COALESCE(r.state, 'open') != 'resolved'
+       AND r.jira_issue_key NOT LIKE 'SAMPLE-%'
+       AND r.jira_issue_key NOT LIKE 'HIST-%'
+       AND COALESCE(s.status, 'Current') != 'Resolved'`,
+  );
+
+  // Confirm live Jira project count of open [Shortage] work items.
+  let jiraProjectShortageCount: number | null = null;
+  if (settings.responseProjectKey) {
+    try {
+      const jql = `project = "${settings.responseProjectKey}" AND summary ~ "Shortage" AND statusCategory != Done`;
+      const res = await api.asApp().requestJira(
+        route`/rest/api/3/search/jql?jql=${jql}&maxResults=100&fields=summary`,
+        { headers: { Accept: 'application/json' } },
+      );
+      if (res.ok) {
+        const body = (await res.json()) as {
+          issues?: { fields?: { summary?: string } }[];
+        };
+        jiraProjectShortageCount = (body.issues ?? []).filter((i) =>
+          (i.fields?.summary ?? '').trim().startsWith('[Shortage]'),
+        ).length;
+      }
+    } catch {
+      jiraProjectShortageCount = null;
+    }
+  }
+
+  return {
+    kept: [...keptMap.entries()].map(([ingredient, r]) => ({
+      ingredient,
+      jiraIssueKey: r.jira_issue_key,
+      shortageKey: r.shortage_key,
+    })),
+    removedDbRows,
+    deletedJiraIssues,
+    jiraDeleteErrors,
+    remainingDuplicates: Math.max(0, duplicates.length - batch.length),
+    cleanedSelfImpactRows: Number(beforeSelf),
+    remainingOpenResponses: Number(remainingRows[0]?.n ?? 0),
+    jiraProjectShortageCount,
+  };
 }

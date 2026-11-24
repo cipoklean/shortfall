@@ -109,15 +109,29 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-/** Dashboard: last sync result, headline counts, exposure by space, and response telemetry. */
-resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }) => {
-  const siteUrl = await getSiteUrl(context);
-  await runMigrations();
+/** Shared KPI computation used by both the dashboard resolver and diagnostic report. */
+export async function computeDashboardMetrics() {
+  const settings = await getSettings();
+  const clinicalSpaces = settings.clinicalSpaceKeys.filter(Boolean);
+  const respProj = settings.responseProjectKey?.trim() || '';
+
+  // Exclude Shortfall's own generated Jira response/reversal tickets from impact KPIs.
+  const impactWhereParts = [
+    `(kind != 'jira' OR (title NOT LIKE '[Shortage]%' AND title NOT LIKE '[Owner Review]%' AND title NOT LIKE '[Reversal]%'))`,
+  ];
+  const impactParams: unknown[] = [];
+  if (respProj) {
+    impactWhereParts.push(`(kind != 'jira' OR ref_id NOT LIKE ?)`);
+    impactParams.push(`${respProj}-%`);
+  }
+  if (clinicalSpaces.length > 0) {
+    const ph = clinicalSpaces.map(() => '?').join(',');
+    impactWhereParts.push(`(kind != 'page' OR space_key IS NULL OR space_key = '' OR space_key IN (${ph}))`);
+    impactParams.push(...clinicalSpaces);
+  }
+  const impactWhere = impactWhereParts.join(' AND ');
 
   const [
-    lastSync,
-    settings,
-    graph,
     activeRows,
     discontinuedRows,
     resolvedRows,
@@ -128,12 +142,10 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
     openResponseRows,
     openTempRows,
     reversalsDueRows,
-    exposureRows,
+    pageExposureRows,
+    jiraExposureRows,
     timingRows,
   ] = await Promise.all([
-    kvs.get('lastSync'),
-    getSettings(),
-    probeGraph(),
     query<{ n: number }>(
       `SELECT COUNT(DISTINCT s.shortage_key) AS n
        FROM shortage s
@@ -153,10 +165,34 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
        WHERE s.status = 'Resolved'`,
     ),
     query<{ n: number }>(`SELECT COUNT(*) AS n FROM formulary_item WHERE active = 1`),
-    query<{ n: number }>(`SELECT COUNT(*) AS n FROM impact_item`),
-    query<{ n: number }>(`SELECT COUNT(*) AS n FROM impact_item WHERE COALESCE(hop, 1) = 1`),
-    query<{ n: number }>(`SELECT COUNT(*) AS n FROM impact_item WHERE hop = 2`),
-    query<{ n: number }>(`SELECT COUNT(*) AS n FROM response WHERE COALESCE(state, 'open') != 'resolved'`),
+    query<{ n: number }>(
+      `SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS n
+       FROM impact_item
+       WHERE ${impactWhere}`,
+      impactParams,
+    ),
+    query<{ n: number }>(
+      `SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS n
+       FROM impact_item
+       WHERE ${impactWhere} AND COALESCE(hop, 1) = 1`,
+      impactParams,
+    ),
+    query<{ n: number }>(
+      `SELECT COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS n
+       FROM impact_item
+       WHERE ${impactWhere} AND hop = 2`,
+      impactParams,
+    ),
+    query<{ n: number }>(
+      `SELECT COUNT(DISTINCT r.jira_issue_key) AS n
+       FROM response r
+       LEFT JOIN shortage s ON s.shortage_key = r.shortage_key
+       WHERE COALESCE(r.state, 'open') != 'resolved'
+         AND r.jira_issue_key IS NOT NULL
+         AND r.jira_issue_key NOT LIKE 'SAMPLE-%'
+         AND r.jira_issue_key NOT LIKE 'HIST-%'
+         AND COALESCE(s.status, 'Current') != 'Resolved'`,
+    ),
     query<{ n: number }>(`SELECT COUNT(*) AS n FROM temporary_change WHERE state IN ('open', 'reversal_open')`),
     query<{ n: number }>(
       `SELECT COUNT(*) AS n
@@ -165,18 +201,41 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
        JOIN shortage s ON s.shortage_key = r.shortage_key
        WHERE s.status = 'Resolved' AND tc.state = 'open'`,
     ),
-    query<{ spaceKey: string; count: number }>(
-      `SELECT COALESCE(NULLIF(space_key, ''), 'Jira / Other') AS spaceKey,
-              COUNT(DISTINCT ref_id) AS count
+    clinicalSpaces.length > 0
+      ? query<{ spaceKey: string; count: number }>(
+          `SELECT space_key AS spaceKey, COUNT(DISTINCT ref_id) AS count
+           FROM impact_item
+           WHERE kind = 'page' AND space_key IN (${clinicalSpaces.map(() => '?').join(',')})
+           GROUP BY space_key
+           ORDER BY count DESC`,
+          clinicalSpaces,
+        )
+      : query<{ spaceKey: string; count: number }>(
+          `SELECT space_key AS spaceKey, COUNT(DISTINCT ref_id) AS count
+           FROM impact_item
+           WHERE kind = 'page' AND space_key IS NOT NULL AND space_key != ''
+           GROUP BY space_key
+           ORDER BY count DESC`,
+        ),
+    query<{ projectKey: string; count: number }>(
+      `SELECT SUBSTRING_INDEX(ref_id, '-', 1) AS projectKey, COUNT(DISTINCT ref_id) AS count
        FROM impact_item
-       GROUP BY COALESCE(NULLIF(space_key, ''), 'Jira / Other')
+       WHERE kind = 'jira'
+         AND title NOT LIKE '[Shortage]%'
+         AND title NOT LIKE '[Owner Review]%'
+         AND title NOT LIKE '[Reversal]%'
+         ${respProj ? 'AND ref_id NOT LIKE ?' : ''}
+       GROUP BY SUBSTRING_INDEX(ref_id, '-', 1)
        ORDER BY count DESC`,
+      respProj ? [`${respProj}-%`] : [],
     ),
     query<{ opened_at: string | Date | null; initial_posting_date: string | null }>(
       `SELECT r.opened_at, s.initial_posting_date
        FROM response r
        JOIN shortage s ON s.shortage_key = r.shortage_key
-       WHERE r.opened_at IS NOT NULL AND s.initial_posting_date IS NOT NULL`,
+       WHERE r.opened_at IS NOT NULL
+         AND s.initial_posting_date IS NOT NULL
+         AND r.jira_issue_key NOT LIKE 'SAMPLE-%'`,
     ),
   ]);
 
@@ -197,11 +256,31 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
     medianResponseHours = Math.round(med * 10) / 10;
   }
 
+  const activeMatched = Number(activeRows[0]?.n ?? 0);
+  const discontinuedMatched = Number(discontinuedRows[0]?.n ?? 0);
+  const resolvedMatched = Number(resolvedRows[0]?.n ?? 0);
+
+  const exposureBySpace: { spaceKey: string; count: number; kind?: 'space' | 'jira' }[] = [
+    ...pageExposureRows.map((r) => ({
+      spaceKey: r.spaceKey,
+      count: Number(r.count ?? 0),
+      kind: 'space' as const,
+    })),
+    ...jiraExposureRows
+      .filter((r) => r.projectKey && Number(r.count ?? 0) > 0)
+      .map((r) => ({
+        spaceKey: `Jira: ${r.projectKey}`,
+        count: Number(r.count ?? 0),
+        kind: 'jira' as const,
+      })),
+  ];
+
   return {
-    lastSync: lastSync ?? null,
-    activeMatched: Number(activeRows[0]?.n ?? 0),
-    discontinuedMatched: Number(discontinuedRows[0]?.n ?? 0),
-    resolvedMatched: Number(resolvedRows[0]?.n ?? 0),
+    settings,
+    activeMatched,
+    discontinuedMatched,
+    resolvedMatched,
+    totalMatched: activeMatched + discontinuedMatched + resolvedMatched,
     formularyCount: Number(formularyRows[0]?.n ?? 0),
     impactItems: Number(impactRows[0]?.n ?? 0),
     directImpactItems: Number(directImpactRows[0]?.n ?? 0),
@@ -209,14 +288,40 @@ resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }
     openResponses: Number(openResponseRows[0]?.n ?? 0),
     openTemporaryChanges: Number(openTempRows[0]?.n ?? 0),
     reversalsDue: Number(reversalsDueRows[0]?.n ?? 0),
-    exposureBySpace: exposureRows.map((r) => ({
-      spaceKey: r.spaceKey,
-      count: Number(r.count ?? 0),
-    })),
+    exposureBySpace,
     medianResponseHours,
-    settings,
-    setupComplete: settings.setupComplete,
-    autoCreateResponses: settings.autoCreateResponses,
+  };
+}
+
+/** Dashboard: last sync result, headline counts, exposure by space, and response telemetry. */
+resolver.define('getDashboardData', async ({ context }: { context?: ReqContext }) => {
+  const siteUrl = await getSiteUrl(context);
+  await runMigrations();
+
+  const [lastSync, graph, metrics] = await Promise.all([
+    kvs.get('lastSync'),
+    probeGraph(),
+    computeDashboardMetrics(),
+  ]);
+
+  return {
+    lastSync: lastSync ?? null,
+    activeMatched: metrics.activeMatched,
+    discontinuedMatched: metrics.discontinuedMatched,
+    resolvedMatched: metrics.resolvedMatched,
+    totalMatched: metrics.totalMatched,
+    formularyCount: metrics.formularyCount,
+    impactItems: metrics.impactItems,
+    directImpactItems: metrics.directImpactItems,
+    linkedImpactItems: metrics.linkedImpactItems,
+    openResponses: metrics.openResponses,
+    openTemporaryChanges: metrics.openTemporaryChanges,
+    reversalsDue: metrics.reversalsDue,
+    exposureBySpace: metrics.exposureBySpace,
+    medianResponseHours: metrics.medianResponseHours,
+    settings: metrics.settings,
+    setupComplete: metrics.settings.setupComplete,
+    autoCreateResponses: metrics.settings.autoCreateResponses,
     reducedMode: [
       ...graph.missingScopes,
       ...(graph.note && !graph.available ? [graph.note] : []),
@@ -394,29 +499,41 @@ resolver.define('getMatchedShortages', async () => {
     jira_issue_key: string | null;
     response_state: string | null;
   }>(
-    `SELECT s.shortage_key, s.generic_name, s.status, s.package_ndc, s.presentation,
-            s.dosage_form, s.company_name, s.update_date, s.initial_posting_date,
-            m.reason, f.display_name,
-            COALESCE(ic.impact_count, 0) AS impact_count,
-            r.jira_issue_key,
-            r.state AS response_state
+    `SELECT s.shortage_key,
+            MAX(s.generic_name) AS generic_name,
+            MAX(s.status) AS status,
+            MAX(s.package_ndc) AS package_ndc,
+            MAX(s.presentation) AS presentation,
+            MAX(s.dosage_form) AS dosage_form,
+            MAX(s.company_name) AS company_name,
+            MAX(s.update_date) AS update_date,
+            MAX(s.initial_posting_date) AS initial_posting_date,
+            MIN(m.reason) AS reason,
+            MIN(f.display_name) AS display_name,
+            COALESCE(MAX(ic.impact_count), 0) AS impact_count,
+            MAX(r.jira_issue_key) AS jira_issue_key,
+            MAX(r.state) AS response_state
      FROM \`match\` m
      JOIN shortage s ON s.shortage_key = m.shortage_key
      JOIN formulary_item f ON f.id = m.formulary_item_id
      LEFT JOIN (
-       SELECT shortage_key, COUNT(*) AS impact_count
+       SELECT shortage_key, COUNT(DISTINCT CONCAT(kind, ':', ref_id)) AS impact_count
        FROM impact_item
+       WHERE kind != 'jira'
+          OR (title NOT LIKE '[Shortage]%' AND title NOT LIKE '[Owner Review]%' AND title NOT LIKE '[Reversal]%')
        GROUP BY shortage_key
      ) ic ON ic.shortage_key = s.shortage_key
      LEFT JOIN (
        SELECT shortage_key, MAX(jira_issue_key) AS jira_issue_key, MAX(state) AS state
        FROM response
+       WHERE jira_issue_key NOT LIKE 'SAMPLE-%' AND jira_issue_key NOT LIKE 'HIST-%'
        GROUP BY shortage_key
      ) r ON r.shortage_key = s.shortage_key
      WHERE m.superseded = 0
-     ORDER BY CASE s.status WHEN 'Current' THEN 0 WHEN 'To Be Discontinued' THEN 1 ELSE 2 END,
-              s.update_date DESC
-     LIMIT 200`,
+     GROUP BY s.shortage_key
+     ORDER BY CASE MAX(s.status) WHEN 'Current' THEN 0 WHEN 'To Be Discontinued' THEN 1 ELSE 2 END,
+              MAX(s.update_date) DESC
+     LIMIT 2000`,
   );
   return rows.map((r) => ({
     shortageId: r.shortage_key,

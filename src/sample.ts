@@ -167,18 +167,46 @@ async function ensureSpace(): Promise<{ key: string; id: string }> {
 
 async function listExistingPagesInSpace(
   spaceId: string,
-): Promise<Map<string, { id: string; version: number }>> {
-  const byTitle = new Map<string, { id: string; version: number }>();
+): Promise<Map<string, { id: string; version: number; title: string }>> {
+  const byTitle = new Map<string, { id: string; version: number; title: string }>();
+
+  // 1. Primary lookup via Confluence v2 Pages API.
   const res = await confluenceRequest(route`/wiki/api/v2/spaces/${spaceId}/pages?limit=100`);
-  if (!res.ok) return byTitle;
-  const data = (await res.json()) as {
-    results?: { id: string; title: string; status?: string; version?: { number?: number } }[];
-  };
-  for (const p of data.results ?? []) {
-    if (!p.status || p.status === 'current') {
-      byTitle.set(p.title, { id: String(p.id), version: Number(p.version?.number ?? 1) });
+  if (res.ok) {
+    const data = (await res.json()) as {
+      results?: { id: string; title: string; status?: string; version?: { number?: number } }[];
+    };
+    for (const p of data.results ?? []) {
+      if (!p.status || p.status === 'current') {
+        byTitle.set(p.title.trim().toLowerCase(), {
+          id: String(p.id),
+          version: Number(p.version?.number ?? 1),
+          title: p.title,
+        });
+      }
     }
   }
+
+  // 2. Fallback via CQL search so existing pages are never missed if v2 scope lags.
+  if (byTitle.size === 0) {
+    const cql = `space = "${SPACE_KEY}" AND type = page`;
+    const cqlRes = await confluenceRequest(
+      route`/wiki/rest/api/content/search?cql=${cql}&limit=100&expand=version`,
+    );
+    if (cqlRes.ok) {
+      const data = (await cqlRes.json()) as {
+        results?: { id: string; title: string; version?: { number?: number } }[];
+      };
+      for (const p of data.results ?? []) {
+        byTitle.set(p.title.trim().toLowerCase(), {
+          id: String(p.id),
+          version: Number(p.version?.number ?? 1),
+          title: p.title,
+        });
+      }
+    }
+  }
+
   return byTitle;
 }
 
@@ -193,7 +221,7 @@ async function createPage(spaceId: string, title: string, body: string): Promise
       body: { representation: 'storage', value: body },
     }),
   });
-  if (!res.ok) throw new Error(`page create failed: HTTP ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const page = (await res.json()) as { id: string };
   return page.id;
 }
@@ -215,7 +243,7 @@ async function updatePage(
       version: { number: version + 1, message: 'Shortfall sample protocol update' },
     }),
   });
-  if (!res.ok) throw new Error(`page update failed: HTTP ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return pageId;
 }
 
@@ -350,6 +378,9 @@ async function seedSampleHistoryAndReversal(refs: SampleRefs): Promise<void> {
 export async function loadSampleHospital(): Promise<{
   spaceKey: string;
   pageIds: string[];
+  createdPages: number;
+  updatedPages: number;
+  reusedPages: number;
   formularyCount: number;
   warnings?: string[];
 }> {
@@ -364,16 +395,31 @@ export async function loadSampleHospital(): Promise<{
     await saveSettings({ clinicalSpaceKeys: [...settings.clinicalSpaceKeys, SPACE_KEY] });
   }
 
+  let createdPages = 0;
+  let updatedPages = 0;
+  let reusedPages = 0;
+
   const existingPages = await listExistingPagesInSpace(space.id);
   for (const page of SAMPLE_PAGES) {
-    try {
-      const existing = existingPages.get(page.title);
-      const id = existing
-        ? await updatePage(existing.id, existing.version, page.title, page.body)
-        : await createPage(space.id, page.title, page.body);
-      if (!refs.pageIds.includes(id)) refs.pageIds.push(id);
-    } catch (e) {
-      warnings.push(`page "${page.title}": ${String(e)}`);
+    const existing = existingPages.get(page.title.trim().toLowerCase());
+    if (existing) {
+      try {
+        await updatePage(existing.id, existing.version, page.title, page.body);
+        updatedPages++;
+      } catch {
+        // Reuse the existing page cleanly if an update cannot be written.
+        reusedPages++;
+      }
+      if (!refs.pageIds.includes(existing.id)) refs.pageIds.push(existing.id);
+    } else {
+      try {
+        const id = await createPage(space.id, page.title, page.body);
+        createdPages++;
+        if (!refs.pageIds.includes(id)) refs.pageIds.push(id);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'request failed';
+        warnings.push(`Could not create "${page.title}" (${msg})`);
+      }
     }
   }
 
@@ -415,6 +461,9 @@ export async function loadSampleHospital(): Promise<{
   return {
     spaceKey: space.key,
     pageIds: refs.pageIds,
+    createdPages,
+    updatedPages,
+    reusedPages,
     formularyCount: refs.formularyIds.length,
     warnings: warnings.length ? warnings : undefined,
   };

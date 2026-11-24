@@ -28,20 +28,23 @@ Confluence both present.
    11-digit HIPAA format automatically), or press **Load sample hospital**
    (creates a fictional Confluence space, drug list and Jira project using
    the normal product APIs — no patient data anywhere).
-4. **Response mode**: automatic or manual work-item creation, and the Jira
-   project for responses.
+4. **Response mode**: automatic Jira response creation is **OFF by default**
+   on fresh installs. Choose the Jira project for responses, and only enable
+   automatic creation if you want sync to open Jira work items without a
+   manual click (capped at 1 open response per shorted ingredient).
 5. **Run first sync**. The dashboard shows matched shortages (matched by
    10→11-digit HIPAA NDC first, then whole-word, combination-aware RxNorm
-   ingredient + dosage form), the impact map, owners, and the last sync
-   result.
+   ingredient + dosage form), distinct affected protocols, owners, and the
+   last sync result.
 
 ## What to try
 
 - Click a matched shortage row → the **Shortage Detail Drawer** shows the
   FDA presentation facts, direct Confluence/Jira hits, **2nd-hop blast
   radius** linked protocols, resolved owners/teams, and earlier responses.
-- Click **Enrich owners** → runs user-context Teamwork Graph curated
-  queries (`confluencePageOwners`, `confluencePageCreator`,
+- Click **Enrich owners & links (Teamwork Graph)** → runs user-context
+  Teamwork Graph curated queries (`confluencePageOwners`,
+  `confluencePageCreator`, `confluencePageContributors`,
   `confluencePageLinkedConfluencePages`, `atlassianTeamsBySpace`,
   `atlassianUserInTeams`) to map owners, teams, and linked 2nd-hop pages.
 - Open the Jira response work item → the panel lists affected pages,
@@ -49,10 +52,17 @@ Confluence both present.
   Reversal Checklist** where workarounds can be logged and checked off.
 - Open an affected Confluence page → the byline shows a shortage notice
   linking straight to the Jira response.
-- Ask the **Shortfall** agent in Rovo Chat: *"What does the cefazolin
-  shortage affect and what did we do last time?"* — every fact is linked.
-  The agent has 8 Rovo actions (6 read actions + 2 confirmation-gated write
-  actions) and a `rovo:skill` playbook.
+- **Rovo Chat — IMPORTANT: select the `Shortfall` agent (do not use the
+  default generic Rovo agent).** Either click **"Ask Shortfall in Rovo"** in
+  the Shortfall dashboard header (launches the `Shortfall` Forge agent
+  directly), or open Rovo Chat and choose **Shortfall** from the agent
+  picker. Ask: *"What does the cefazolin shortage affect, what did we do
+  last time, and which temporary changes still need to be reversed?"* —
+  Shortfall calls `get-active-shortages`, `get-shortage-impact`,
+  `get-past-responses`, and `get-reversal-checklist` (all 8 actions +
+  `rovo:skill` playbook) and cites every fact with a source link. The
+  default Rovo agent only runs generic Confluence search and does not have
+  access to Shortfall's actions or reversal checklist.
 - In Rovo Studio, the `Shortfall` `rovo:mcp` server exposes all 6 read
   actions as tools for custom agents, and `mcp/SKILL.md` provides a
   standalone skill definition for external MCP clients.
