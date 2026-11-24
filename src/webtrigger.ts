@@ -130,7 +130,7 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
     started_at: string;
     finished_at: string;
     result: string;
-  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY id DESC LIMIT 10`);
+  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY started_at DESC, id DESC LIMIT 10`);
 
   const matches = await query<{
     shortage_key: string;
@@ -164,6 +164,140 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
       }
     : undefined;
 
+  const includeAudit = req.queryParameters?.audit?.[0] === '1';
+  let audit: Record<string, unknown> | undefined;
+  if (includeAudit) {
+    const respProj = kpis.settings.responseProjectKey ?? 'PROC';
+    const procIssues: {
+      key: string;
+      summary: string;
+      assignee: string;
+      priority: string;
+      status: string;
+      reporter: string;
+      links: { type: string; inward?: string; outward?: string }[];
+      hasAdfLinks: boolean;
+      hasHumanFdaLink: boolean;
+      hasLabeledRawFdaLink: boolean;
+    }[] = [];
+    let nextPageToken: string | undefined;
+    const jql = `project = "${respProj}" ORDER BY created ASC`;
+    let totalProc = 0;
+    for (let p = 0; p < 10; p++) {
+      const res = await api.asApp().requestJira(
+        nextPageToken
+          ? route`/rest/api/3/search/jql?jql=${jql}&maxResults=100&fields=summary,assignee,priority,status,reporter,issuelinks,description&nextPageToken=${nextPageToken}`
+          : route`/rest/api/3/search/jql?jql=${jql}&maxResults=100&fields=summary,assignee,priority,status,reporter,issuelinks,description`,
+        { headers: { Accept: 'application/json' } },
+      );
+      if (!res.ok) break;
+      const body = (await res.json()) as {
+        issues?: {
+          key: string;
+          fields: {
+            summary?: string;
+            assignee?: { displayName?: string } | null;
+            priority?: { name?: string } | null;
+            status?: { name?: string } | null;
+            reporter?: { displayName?: string; accountType?: string } | null;
+            issuelinks?: {
+              type?: { name?: string };
+              inwardIssue?: { key?: string };
+              outwardIssue?: { key?: string };
+            }[];
+            description?: unknown;
+          };
+        }[];
+        nextPageToken?: string;
+        isLast?: boolean;
+      };
+      const items = body.issues ?? [];
+      totalProc += items.length;
+      for (const issue of items) {
+        const sum = (issue.fields?.summary ?? '').trim();
+        const isSf =
+          (sum.startsWith('[Shortage]') || sum.startsWith('[Owner Review]') || sum.startsWith('[Reversal]')) &&
+          (issue.fields?.reporter?.accountType === 'app' ||
+            (issue.fields?.reporter?.displayName ?? '').toLowerCase().includes('shortfall'));
+        if (!isSf) continue;
+        const descJson = JSON.stringify(issue.fields?.description ?? {});
+        procIssues.push({
+          key: issue.key,
+          summary: sum,
+          assignee: issue.fields?.assignee?.displayName ?? 'Unassigned',
+          priority: issue.fields?.priority?.name ?? 'None',
+          status: issue.fields?.status?.name ?? '',
+          reporter: issue.fields?.reporter?.displayName ?? '',
+          links: (issue.fields?.issuelinks ?? []).map((l) => ({
+            type: l.type?.name ?? '',
+            inward: l.inwardIssue?.key,
+            outward: l.outwardIssue?.key,
+          })),
+          hasAdfLinks: descJson.includes('"type":"link"'),
+          hasHumanFdaLink: descJson.includes('https://dps.fda.gov/drugshortages'),
+          hasLabeledRawFdaLink: descJson.includes('openFDA record (raw data)'),
+        });
+      }
+      if (body.isLast || !body.nextPageToken || !items.length) break;
+      nextPageToken = body.nextPageToken;
+    }
+
+    // List SHOSP pages to verify zero duplicate titles.
+    const shospPages: { id: string; title: string }[] = [];
+    const spRes = await api.asApp().requestConfluence(route`/wiki/api/v2/spaces?keys=SHOSP`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (spRes.ok) {
+      const spBody = (await spRes.json()) as { results?: { id: string }[] };
+      const spaceId = spBody.results?.[0]?.id;
+      if (spaceId) {
+        const pgRes = await api
+          .asApp()
+          .requestConfluence(route`/wiki/api/v2/spaces/${spaceId}/pages?limit=100`, {
+            headers: { Accept: 'application/json' },
+          });
+        if (pgRes.ok) {
+          const pgBody = (await pgRes.json()) as {
+            results?: { id: string; title: string; status?: string }[];
+          };
+          for (const pg of pgBody.results ?? []) {
+            if (!pg.status || pg.status === 'current') {
+              shospPages.push({ id: String(pg.id), title: pg.title });
+            }
+          }
+        }
+      }
+    }
+
+    const procImpactCount =
+      (
+        await query<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM impact_item WHERE kind = 'jira' AND ref_id LIKE ?`,
+          [`${respProj}-%`],
+        )
+      )[0]?.n ?? 0;
+
+    const matchedTabCount =
+      (
+        await query<{ n: number }>(
+          `SELECT COUNT(DISTINCT s.shortage_key) AS n
+           FROM \`match\` m
+           JOIN shortage s ON s.shortage_key = m.shortage_key
+           JOIN formulary_item f ON f.id = m.formulary_item_id
+           WHERE m.superseded = 0`,
+        )
+      )[0]?.n ?? 0;
+
+    audit = {
+      totalProcIssues: totalProc,
+      preservedNonShortfallProcIssues: totalProc - procIssues.length,
+      shortfallProcIssues: procIssues,
+      procImpactRowsCount: Number(procImpactCount),
+      shospPages,
+      matchedTabCount: Number(matchedTabCount),
+    };
+  }
+
   const impactItems = await query<{
     shortage_key: string;
     kind: string;
@@ -192,6 +326,7 @@ export async function webReport(req: WebRequest, _ctx: WebContext) {
     },
     kpis,
     rovoCheck,
+    audit,
     syncRuns,
     lastSync,
     pageCheck,

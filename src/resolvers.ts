@@ -767,7 +767,7 @@ resolver.define('getSyncLog', async () => {
     started_at: string;
     finished_at: string;
     result: string;
-  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY id DESC LIMIT 10`);
+  }>(`SELECT id, kind, state, started_at, finished_at, result FROM sync_run ORDER BY started_at DESC, id DESC LIMIT 10`);
 });
 
 resolver.define('loadSampleHospital', async ({ context }: { context?: ReqContext }) => {
@@ -790,7 +790,7 @@ resolver.define('getSampleState', async () => {
 resolver.define('getSyncProgress', async () => {
   await runMigrations();
   const rows = await query<{ state: string; progress: string; started_at: string; result: string }>(
-    `SELECT state, progress, started_at, result FROM sync_run ORDER BY id DESC LIMIT 1`,
+    `SELECT state, progress, started_at, result FROM sync_run ORDER BY started_at DESC, id DESC LIMIT 1`,
   );
   const r = rows[0];
   if (!r) return { state: 'none' };

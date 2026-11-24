@@ -366,7 +366,7 @@ export async function runSyncJob(kind: string): Promise<void> {
     const impactResult = await runImpactMapping(matchedKeys, progress);
     const newMatchedKeys = newKeys.filter((k) => matchedKeys.has(k));
     const responseResult = settings.autoCreateResponses
-      ? await createResponsesForNewMatches(newMatchedKeys)
+      ? await createResponsesForNewMatches([...matchedKeys])
       : { created: 0, skipped: 'auto-create disabled' };
     const reversalResult = await openReversalTasks(resolvedKeys);
 
